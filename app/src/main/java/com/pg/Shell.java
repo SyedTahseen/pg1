@@ -1,0 +1,482 @@
+package com.pg;
+
+import android.content.*;
+import android.os.Build;
+import android.os.Environment;
+import java.io.*;
+import java.util.*;
+import java.security.PrivateKey;
+import java.security.PublicKey;
+import java.util.concurrent.TimeUnit;
+import java.util.function.BooleanSupplier;
+
+/**
+ * Hides a folder/file in two steps:
+ *  1. instantly moves it into the hidden vault folder ".pg" at the root of the same storage volume
+ *     (/storage/emulated/0/.pg/<id>_<name>); a same-volume move is a plain rename;
+ *  2. in the background (LockService -> protectAll()) packs it into encrypted containers
+ *     (/storage/emulated/0/.pg/<id>.<n>.pge) in small steps: each container is verified before the plain files it
+ *     holds are deleted, so an interruption never loses progress.
+ * Restore needs the PIN to open containers; items still waiting to be locked (or hidden by older versions
+ * with the in-place ".pgh_" name) restore without it.
+ * Order of attempts for a move: normal rename -> (reason logged) -> optional root "mv" fallback -> file-by-file move.
+ */
+public class Shell {
+    static final String[] ALIASES = {"/storage/emulated/0/", "/storage/self/primary/", "/sdcard/", "/data/media/0/"};
+    static final String PREFIX = ".pgh_";   // legacy in-place hiding (older versions)
+    static final String VAULT = ".pg";
+    static final String KEYS = ".keys";       // copy of the key bundle inside every vault (survives an app reinstall)
+    static final Object LOCK = new Object();
+    static final java.util.concurrent.atomic.AtomicInteger applyActive = new java.util.concurrent.atomic.AtomicInteger();   // hide/restore running or waiting
+    static volatile boolean stopReq;           // hide/restore ask a running protect() to pause
+
+    /** returns {realPath, plainStagePath (inside .pg), legacyHiddenPath (old in-place name), containerPrefix} or null if the path isn't allowed. */
+    static String[] resolve(String p) {
+        String base = null, rel = null;
+        for (String a : ALIASES) if (p.startsWith(a)) { base = "/storage/emulated/0"; rel = p.substring(a.length()); break; }
+        if (base == null && p.startsWith("/storage/")) {
+            String r = p.substring(9);
+            int s = r.indexOf('/');
+            if (s > 0) {
+                String vol = r.substring(0, s);
+                if (!vol.equals("emulated") && !vol.equals("self")) { base = "/storage/" + vol; rel = r.substring(s + 1); }
+            }
+        }
+        if (base == null || rel.isEmpty() || rel.contains("..") || rel.contains("'") || rel.contains("\n")) return null;
+        while (rel.endsWith("/")) rel = rel.substring(0, rel.length() - 1);
+        // Never touch folders other apps/Android depend on: hiding them can make apps hang or crash.
+        String low = rel.toLowerCase(Locale.ROOT);
+        if (low.equals(VAULT) || low.startsWith(VAULT + "/")) return null;   // the vault itself is off limits
+        if (low.equals("android") || low.startsWith("android/")) return null;
+        if (!low.contains("/") && Arrays.asList("dcim", "download", "downloads", "pictures", "movies", "music",
+                "documents", "alarms", "notifications", "podcasts", "ringtones", "audiobooks", "recordings").contains(low)) return null;
+        File real = new File(base + "/" + rel);
+        if (real.getName().startsWith(PREFIX)) return null;
+        String id = (rel.hashCode() & 0x7fffffff) + "_" + real.getName();
+        return new String[]{real.getPath(), base + "/" + VAULT + "/" + id, real.getParent() + "/" + PREFIX + id,
+            base + "/" + VAULT + "/" + (rel.hashCode() & 0x7fffffff)};
+    }
+
+    /** Moves src into dst without ever overwriting anything. */
+    static boolean merge(File src, File dst) {
+        boolean ok = true;
+        if (src.isDirectory()) {
+            if (!dst.exists() && !dst.mkdirs()) return false;
+            File[] kids = src.listFiles();
+            if (kids != null) for (File k : kids) ok &= merge(k, new File(dst, k.getName()));
+            return src.delete() && ok;      // only succeeds when empty
+        }
+        if (dst.exists()) return false;
+        return src.renameTo(dst);
+    }
+
+    static boolean hasAccess() { return Environment.isExternalStorageManager(); }
+
+    /** /storage/emulated/0/x -> /data/media/0/x (what root sees underneath Android's storage layer). */
+    static String lower(String p) {
+        if (p.startsWith("/storage/emulated/0/")) return "/data/media/0/" + p.substring(20);
+        if (p.startsWith("/storage/")) return "/mnt/media_rw/" + p.substring(9);
+        return null;
+    }
+
+    /** Optional root command (10 s limit). Returns null if root is unavailable. */
+    static String su(String cmd) {
+        try {
+            Process p = new ProcessBuilder("su", "-c", cmd).redirectErrorStream(true).start();
+            final StringBuilder out = new StringBuilder();
+            final InputStream in = p.getInputStream();
+            Thread t = new Thread(new Runnable() { public void run() {
+                try (BufferedReader r = new BufferedReader(new InputStreamReader(in))) {
+                    String l; while ((l = r.readLine()) != null) synchronized (out) { out.append(l).append('\n'); }
+                } catch (Exception ignored) {}
+            }});
+            t.start();
+            if (!p.waitFor(10, TimeUnit.SECONDS)) { p.destroyForcibly(); return null; }
+            t.join(1000);
+            synchronized (out) { return out.toString(); }
+        } catch (Exception e) { return null; }
+    }
+
+    /** Renames from -> to. If Android refuses, logs WHY and tries the fallbacks. */
+    static boolean move(File from, File to, StringBuilder log) {
+        if (from.renameTo(to)) return true;
+        try {
+            java.nio.file.Files.move(from.toPath(), to.toPath(), java.nio.file.StandardCopyOption.ATOMIC_MOVE);
+            return true;
+        } catch (Exception e) { log.append("  rename refused: ").append(e).append('\n'); }
+        String lf = lower(from.getPath()), lt = lower(to.getPath());
+        if (lf != null && lt != null && !lf.contains("'") && !lt.contains("'")) {
+            String o = su("mv '" + lf + "' '" + lt + "' && echo PGOK");
+            if (o != null && o.contains("PGOK")) { log.append("  done with root fallback\n"); return true; }
+            log.append("  root fallback not available (allow PrivacyGuard in KernelSU Superuser to enable it)\n");
+        }
+        if (from.isDirectory()) {
+            boolean ok = merge(from, to);
+            log.append(ok ? "  moved file by file\n" : "  file-by-file move incomplete\n");
+            return ok;
+        }
+        return false;
+    }
+
+    // ------------------------------------------------------------------ containers & keys
+
+    /** Existing containers of one item (<prefix>.<n>.pge), oldest first. */
+    static List<File> containers(String prefix) {
+        File p = new File(prefix), dir = p.getParentFile();
+        String pre = p.getName() + ".";
+        TreeMap<Integer, File> m = new TreeMap<>();
+        File[] fs = dir == null ? null : dir.listFiles();
+        if (fs != null) for (File f : fs) {
+            String n = f.getName();
+            if (!n.startsWith(pre) || !n.endsWith(".pge")) continue;
+            String mid = n.substring(pre.length(), n.length() - 4);
+            if (mid.matches("\\d{1,6}")) m.put(Integer.parseInt(mid), f);
+        }
+        return new ArrayList<>(m.values());
+    }
+
+    static Set<String> pathSet(Context c) {
+        return new HashSet<>(c.getSharedPreferences("pg", 0).getStringSet("paths", new HashSet<String>()));
+    }
+
+    /** Vault folders to look at: the primary storage one plus the one of every selected path. */
+    static Set<File> vaultDirs(Set<String> paths) {
+        Set<File> out = new LinkedHashSet<>();
+        out.add(new File("/storage/emulated/0/" + VAULT));
+        for (String p : paths) { String[] r = resolve(p); if (r != null) out.add(new File(r[1]).getParentFile()); }
+        return out;
+    }
+
+    static byte[] readAll(File f) {
+        try (FileInputStream in = new FileInputStream(f)) {
+            ByteArrayOutputStream o = new ByteArrayOutputStream();
+            byte[] b = new byte[4096]; int n;
+            while ((n = in.read(b)) > 0) o.write(b, 0, n);
+            return o.toByteArray();
+        } catch (Exception e) { return null; }
+    }
+
+    static void writeKeys(File vault, byte[] bundle) {
+        try {
+            File k = new File(vault, KEYS);
+            byte[] cur = k.exists() ? readAll(k) : null;
+            if (cur != null && Arrays.equals(cur, bundle)) return;
+            if (!vault.isDirectory() && !vault.mkdirs()) return;
+            File t = new File(vault, KEYS + ".tmp");
+            try (FileOutputStream o = new FileOutputStream(t)) { o.write(bundle); o.getFD().sync(); }
+            if (!t.renameTo(k)) t.delete();
+        } catch (Exception ignored) {}
+    }
+
+    /** The key bundle: the app's own copy, else the copy kept in a vault (after a reinstall). */
+    static byte[] bundle(Context c) {
+        SharedPreferences sp = c.getSharedPreferences("pg", 0);
+        String b64 = sp.getString("vbundle", null);
+        if (b64 != null) try { return java.util.Base64.getDecoder().decode(b64); } catch (Exception ignored) {}
+        for (File v : vaultDirs(pathSet(c))) {
+            File k = new File(v, KEYS);
+            byte[] b = k.exists() ? readAll(k) : null;
+            if (b == null) continue;
+            try {
+                Vault.publicKey(b);       // sanity check
+                sp.edit().putString("vbundle", java.util.Base64.getEncoder().encodeToString(b)).apply();
+                return b;
+            } catch (Exception ignored) {}
+        }
+        return null;
+    }
+
+    static byte[] vkey(Context c) { return Common.unhex(c.getSharedPreferences("pg", 0).getString("vkey", null)); }
+
+    static void storeBundle(Context c, byte[] b) {
+        c.getSharedPreferences("pg", 0).edit().putString("vbundle", java.util.Base64.getEncoder().encodeToString(b)).commit();
+        for (File v : vaultDirs(pathSet(c))) if (v.isDirectory()) writeKeys(v, b);
+    }
+
+    public static boolean hasKey(Context c) { return c.getSharedPreferences("pg", 0).getString("vbundle", null) != null; }
+
+    /** Called after a correct PIN was accepted by the module: makes sure a lock key exists (and is bound to the device secret). */
+    public static void ensureBundle(Context c, String pin) {
+        try {
+            byte[] b = bundle(c), vk = vkey(c);
+            if (b == null) storeBundle(c, Vault.newBundle(pin.toCharArray(), vk));
+            else if (vk != null && !Vault.usesVkey(b)) storeBundle(c, Vault.rewrap(b, pin.toCharArray(), pin.toCharArray(), vk));
+        } catch (Exception e) { save(c, "key", "lock key not updated: " + e); }
+    }
+
+    /** PIN changed: re-protect the private key with the new PIN everywhere the bundle is kept. */
+    public static void rewrapPin(Context c, String oldPin, String newPin) {
+        try {
+            byte[] b = bundle(c);
+            if (b != null) storeBundle(c, Vault.rewrap(b, oldPin.toCharArray(), newPin.toCharArray(), vkey(c)));
+        } catch (Exception e) { save(c, "key", "lock key not re-protected: " + e); }
+    }
+
+    static PrivateKey unlock(Context c, String pin) throws Exception {
+        byte[] b = bundle(c);
+        if (b == null) throw new IOException("no lock key found");
+        try { return Vault.unlock(b, pin.toCharArray(), vkey(c)); }
+        catch (java.security.GeneralSecurityException e) { throw new IOException("wrong PIN"); }
+        catch (IllegalStateException e) { throw new IOException("device key missing - enable the module, reboot, open the app once"); }
+    }
+
+    /** Hidden items that still have a plain copy in .pg (not locked yet), as resolve() arrays. */
+    static List<String[]> waiting(Context c) {
+        List<String[]> out = new ArrayList<>();
+        for (String p : pathSet(c)) { String[] r = resolve(p); if (r != null && new File(r[1]).exists()) out.add(r); }
+        return out;
+    }
+
+    /** How many items are hidden but not locked yet. */
+    public static int pending(Context c) { return waiting(c).size(); }
+
+    /** True when a hide/restore log reports that something could not be done. */
+    static boolean hasProblems(String log) {
+        return log.contains("FAILED") || log.contains("LOCKED") || log.contains("could not open");
+    }
+
+    static boolean deleteTree(File f) {
+        if (java.nio.file.Files.isSymbolicLink(f.toPath())) return f.delete();
+        File[] kids = f.isDirectory() ? f.listFiles() : null;
+        boolean ok = true;
+        if (kids != null) for (File k : kids) ok &= deleteTree(k);
+        return f.delete() && ok;
+    }
+
+    /** Removes .pg when nothing is left in it (and the key copy with it). */
+    static void cleanVault(File vault) {
+        String[] kids = vault.list();
+        if (kids == null) return;
+        if (kids.length == 1 && kids[0].equals(KEYS)) { new File(vault, KEYS).delete(); kids = vault.list(); }
+        if (kids != null && kids.length == 0) vault.delete();
+    }
+
+    // ------------------------------------------------------------------ hide / restore
+
+    static final long BATCH = 256L << 20;       // one container holds up to ~256 MB of small files; a big file gets its own
+
+    /** Walks a hidden item: every real file in order, plus folders that contain nothing (so they come back too). */
+    static void plan(File f, String name, List<Vault.Entry> out) {
+        if (java.nio.file.Files.isSymbolicLink(f.toPath())) return;
+        if (f.isDirectory()) {
+            File[] kids = f.listFiles();
+            if (kids == null || kids.length == 0) { out.add(new Vault.Entry(f, name, true)); return; }
+            Arrays.sort(kids);
+            for (File k : kids) plan(k, name + "/" + k.getName(), out);
+        } else if (f.isFile()) out.add(new Vault.Entry(f, name, false));
+    }
+
+    // ---- progress (shown as a bar in the app and in the notification) ----
+    static long pDone, pTotal, pLast;
+    static String pPhase, pName;
+
+    static long sizeOf(File f) {
+        if (java.nio.file.Files.isSymbolicLink(f.toPath())) return 0;
+        if (f.isFile()) return f.length();
+        long n = 0; File[] k = f.listFiles();
+        if (k != null) for (File x : k) n += sizeOf(x);
+        return n;
+    }
+
+    /** Starts a progress run: phase = "hide" | "lock" | "restore"; total in bytes (or items for "hide"). */
+    static synchronized void progStart(final Context c, String phase, long total) {
+        pPhase = phase; pTotal = Math.max(1, total); pDone = 0; pName = ""; pLast = 0;
+        if (c == null) { Vault.PROGRESS = null; return; }
+        progWrite(c, true);
+        Vault.PROGRESS = new java.util.function.LongConsumer() { public void accept(long n) { pDone += n; progWrite(c, false); } };
+    }
+    static void progName(Context c, String name) { pName = name; if (c != null) progWrite(c, true); }
+    static void progItem(Context c) { pDone++; if (c != null) progWrite(c, true); }
+    static void progWrite(Context c, boolean force) {
+        long now = System.currentTimeMillis();
+        if (!force && now - pLast < 400) return;
+        pLast = now;
+        c.getSharedPreferences("pg", 0).edit().putString("pg_phase", pPhase).putString("pg_name", pName == null ? "" : pName)
+            .putLong("pg_done", Math.min(pDone, pTotal)).putLong("pg_total", pTotal).putLong("pg_ts", now).apply();
+    }
+    /** Ends the run only if it is still the given phase (a hide/restore may have taken over from a paused lock). */
+    static synchronized void progEnd(Context c, String phase) {
+        if (phase != null && !phase.equals(pPhase)) return;
+        Vault.PROGRESS = null; pPhase = null;
+        if (c != null) c.getSharedPreferences("pg", 0).edit().remove("pg_phase").remove("pg_name").remove("pg_done").remove("pg_total").remove("pg_ts").apply();
+    }
+
+    static String mb(long b) { return (b >> 20) + " MB"; }
+
+    /**
+     * Locks hidden items in the background, ONE SMALL STEP AT A TIME: each step packs a few files into a container,
+     * verifies it, then deletes just those plain files. If anything interrupts (system stop, reboot, app killed, no space)
+     * everything already finished stays locked and the next run continues with what is left, instead of starting over.
+     * Returns true only if it paused because hide/restore needed the lock.
+     */
+    public static boolean protect(Context c, final BooleanSupplier cancel) {
+        List<String[]> todo = waiting(c);
+        if (todo.isEmpty()) return false;
+        if (applyActive.get() > 0) return true;       // a hide/restore is running: wait, then run again
+        byte[] b = bundle(c);
+        if (b == null) { save(c, "lock", "NOT LOCKED: no lock key yet. Open PrivacyGuard and unlock once."); return false; }
+        StringBuilder log = new StringBuilder();
+        boolean yielded = false;
+        try {
+            PublicKey pub = Vault.publicKey(b);
+            BooleanSupplier stop = new BooleanSupplier() { public boolean getAsBoolean() { return stopReq || cancel.getAsBoolean(); } };
+            long sum = 0;
+            for (String[] r : todo) sum += sizeOf(new File(r[1]));
+            progStart(c, "lock", sum * 2);          // every byte is written once and read once to verify it
+            outer:
+            for (String[] r : todo) {
+                String name = new File(r[0]).getName();
+                progName(c, name);
+                File plain = new File(r[1]);
+                List<Vault.Entry> all = new ArrayList<>();
+                synchronized (LOCK) { if (!plain.exists()) continue; plan(plain, name, all); }
+                long total = 0, done = 0; int step = 0;
+                for (Vault.Entry e : all) if (!e.dir) total += e.f.length();
+                int i = 0;
+                while (i < all.size()) {
+                    if (stopReq) { yielded = true; break outer; }
+                    if (cancel.getAsBoolean()) break outer;
+                    List<Vault.Entry> batch = new ArrayList<>();
+                    long bytes = 0;
+                    while (i < all.size()) {
+                        Vault.Entry e = all.get(i);
+                        long len = e.dir ? 0 : e.f.length();
+                        if (!batch.isEmpty() && bytes + len > BATCH) break;
+                        batch.add(e); bytes += len; i++;
+                        if (bytes >= BATCH) break;
+                    }
+                    synchronized (LOCK) {
+                        if (!plain.exists()) break;
+                        File vault = plain.getParentFile();
+                        List<File> have = containers(r[3]);
+                        int n = 0;
+                        if (!have.isEmpty()) { String nm = have.get(have.size() - 1).getName(); n = Integer.parseInt(nm.substring(new File(r[3]).getName().length() + 1, nm.length() - 4)) + 1; }
+                        File out = new File(r[3] + "." + n + ".pge"), tmp = new File(out.getPath() + ".tmp");
+                        try {
+                            long free = vault.getUsableSpace();
+                            if (free < bytes + (64L << 20))
+                                throw new IOException("not enough free space (" + mb(free) + " free, needs " + mb(bytes + (64L << 20)) + ")");
+                            writeKeys(vault, b);
+                            Vault.encrypt(batch, tmp, pub, stop);
+                            if (!tmp.renameTo(out)) throw new IOException("cannot rename container");
+                            for (Vault.Entry e : batch) if (!e.dir) e.f.delete();
+                            done += bytes; step++;
+                        } catch (Vault.Stopped e) {
+                            tmp.delete();
+                            yielded = stopReq;
+                            log.append("paused: ").append(name).append(" (").append(mb(done)).append(" of ").append(mb(total)).append(" locked, rest continues next run)\n");
+                            break outer;
+                        } catch (Exception e) {
+                            tmp.delete();
+                            log.append("FAILED to lock ").append(name).append(": ").append(e).append(" (").append(mb(done)).append(" of ").append(mb(total)).append(" locked so far)\n");
+                            break;      // next item; this one is retried on the next run
+                        }
+                    }
+                }
+                if (i >= all.size()) synchronized (LOCK) {
+                    // every file is inside a verified container: remove what remains of the plain tree (empty folders)
+                    boolean gone = deleteTree(plain);
+                    log.append(gone ? "locked: " : "locked (plain copy not fully removed): ").append(name).append('\n');
+                }
+            }
+        } catch (Exception e) { log.append("FAILED: ").append(e).append('\n'); }
+        progEnd(c, "lock");
+        if (log.length() > 0) save(c, "lock", log.toString());
+        return yielded;
+    }
+
+    /** Locks everything that is waiting. protect() asks for another round when a hide/restore made it pause. */
+    public static void protectAll(Context c, BooleanSupplier cancel) throws InterruptedException {
+        for (int n = 0; n < 20 && protect(c, cancel) && !cancel.getAsBoolean(); n++) Thread.sleep(500);
+    }
+
+    /** Synchronized + idempotent: running it twice at once (app + module trigger) is harmless. c/pin are only needed to open locked items on restore. */
+    static String apply(Set<String> paths, boolean hide, Context c, String pin) {
+        applyActive.incrementAndGet();
+        try {
+            stopReq = true;                   // make a running protect() let go of the lock
+            synchronized (LOCK) {
+                stopReq = false;
+                return apply0(paths, hide, c, pin);
+            }
+        } finally { applyActive.decrementAndGet(); }
+    }
+
+    private static String apply0(Set<String> paths, boolean hide, Context c, String pin) {
+        if (!hasAccess()) return "No storage access. Grant 'All files access' to PrivacyGuard.";
+        StringBuilder log = new StringBuilder("Android " + Build.VERSION.RELEASE + " / " + Build.MANUFACTURER + "\n");
+        PrivateKey priv = null;
+        String lockErr = null;
+        boolean triedUnlock = false;
+        Set<File> touched = new LinkedHashSet<>();
+        if (hide) progStart(c, "hide", paths.size());
+        else {
+            long sum = 0;
+            for (String p : paths) { String[] r = resolve(p); if (r != null) for (File f : containers(r[3])) sum += f.length(); }
+            progStart(c, "restore", sum);
+        }
+        try {
+        for (String p : paths) {
+            String[] r = resolve(p);
+            if (r == null) { log.append("skipped (unsupported path): ").append(p).append('\n'); continue; }
+            File real = new File(r[0]), plain = new File(r[1]);
+            touched.add(plain.getParentFile());
+            progName(c, real.getName());
+            try {
+                if (hide) {
+                    if (!real.exists()) { log.append(plain.exists() || !containers(r[3]).isEmpty() ? "already hidden: " : "not found: ").append(p).append('\n'); continue; }
+                    File vault = plain.getParentFile();
+                    if (!vault.isDirectory() && !vault.mkdirs()) { log.append("FAILED (cannot create .pg): ").append(p).append('\n'); continue; }
+                    boolean ok = !plain.exists() ? move(real, plain, log) : merge(real, plain);
+                    log.append(ok ? "hidden: " : "FAILED: ").append(p).append('\n');
+                } else {
+                    File old = new File(r[2]);
+                    if (!plain.exists() && old.exists()) plain = old;                 // hidden by an older version
+                    List<File> cs = containers(r[3]);
+                    if (!plain.exists() && cs.isEmpty()) { log.append(real.exists() ? "already visible: " : "nothing to restore: ").append(p).append('\n'); continue; }
+                    boolean ok = true;
+                    if (plain.exists()) ok = !real.exists() ? move(plain, real, log) : merge(plain, real);
+                    if (!cs.isEmpty()) {
+                        if (!triedUnlock) {
+                            triedUnlock = true;
+                            try { priv = unlock(c, pin); } catch (Exception e) { lockErr = String.valueOf(e.getMessage()); }
+                        }
+                        if (priv == null) { ok = false; log.append("LOCKED (").append(lockErr).append("): ").append(p).append('\n'); continue; }
+                        File parent = real.getParentFile();
+                        if (!parent.isDirectory() && !parent.mkdirs()) { log.append("FAILED (cannot create folder): ").append(p).append('\n'); continue; }
+                        for (File f : cs) {
+                            try {
+                                long clash = Vault.extract(f, priv, parent, new BooleanSupplier() { public boolean getAsBoolean() { return false; } });
+                                if (clash == 0) f.delete();       // only drop the container once everything in it is back
+                                else { ok = false; log.append("  kept ").append(f.getName()).append(" in .pg: ").append(clash).append(" file(s) clash with different files already in place\n"); }
+                            }
+                            catch (Exception e) { ok = false; log.append("  could not open ").append(f.getName()).append(": ").append(e).append('\n'); }
+                        }
+                    }
+                    log.append(ok ? "restored: " : "FAILED: ").append(p).append('\n');
+                }
+            } catch (Exception e) { log.append("error: ").append(p).append(" ").append(e).append('\n'); }
+            if (hide) progItem(c);
+        }
+        } finally { progEnd(c, hide ? "hide" : "restore"); }
+        if (!hide) for (File v : touched) cleanVault(v);
+        return log.toString();
+    }
+
+    static String save(Context c, String tag, String out) {
+        String log = tag + " @ " + new Date() + "\n" + out;
+        c.getSharedPreferences("pg", 0).edit().putString("log", log).apply();
+        return log;
+    }
+
+    public static String hideSync(Context c) {
+        Set<String> paths = pathSet(c);
+        if (paths.isEmpty()) return save(c, "hide", "no files selected");
+        return save(c, "hide", apply(paths, true, c, null));
+    }
+    public static String restoreSync(Context c, String pin) {
+        Set<String> paths = pathSet(c);
+        if (paths.isEmpty()) return save(c, "restore", "no files selected");
+        return save(c, "restore", apply(paths, false, c, pin));
+    }
+}
