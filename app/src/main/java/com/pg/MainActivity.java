@@ -365,37 +365,180 @@ public class MainActivity extends Activity {
         return e;
     }
 
+    static final int MAX_PIN = 12, MIN_PIN = 4;
+    static final int KEY = 0xFFFFFFFF, KEY_TXT = 0xFF000000, DOT_OFF = 0xFF5C5C60;
+
+    /** Redraws the PIN dots: always at least 4, one more per digit beyond that; the first `filled` are lime. */
+    void drawDots(LinearLayout row, int filled) {
+        row.removeAllViews();
+        int n = Math.max(MIN_PIN, filled);
+        for (int i = 0; i < n; i++) {
+            View d = new View(this);
+            GradientDrawable g = new GradientDrawable();
+            g.setShape(GradientDrawable.OVAL);
+            if (i < filled) { g.setColor(GREEN); g.setStroke(dp(2), GREEN); }
+            else { g.setColor(Color.TRANSPARENT); g.setStroke(dp(2), DOT_OFF); }
+            d.setBackground(g);
+            LinearLayout.LayoutParams p = new LinearLayout.LayoutParams(dp(16), dp(16));
+            p.leftMargin = p.rightMargin = dp(11);
+            row.addView(d, p);
+        }
+    }
+
+    Drawable circleRipple(int fill, int rippleColor) {
+        GradientDrawable f = new GradientDrawable(); f.setShape(GradientDrawable.OVAL); f.setColor(fill);
+        GradientDrawable m = new GradientDrawable(); m.setShape(GradientDrawable.OVAL); m.setColor(Color.WHITE);
+        return new RippleDrawable(android.content.res.ColorStateList.valueOf(rippleColor), f, m);
+    }
+
+    /** One round white number key, centred in its keypad cell. */
+    FrameLayout keyCell(View key) {
+        FrameLayout c = new FrameLayout(this);
+        c.addView(key, new FrameLayout.LayoutParams(dp(58), dp(58), Gravity.CENTER));
+        return c;
+    }
+
     void pinScreen(final int mode) {
-        screenHeader(mode == NEW ? "Create a secret PIN.\nUse a different one from your phone lock."
-            : mode == RESTORE ? "Saved settings found.\nEnter your PIN to restore them." : "Enter your PIN");
-        final EditText e = pinField("PIN");
-        root.addView(e, lp(MATCH, WRAP, 32));
-        final EditText e2 = mode == NEW ? pinField("Confirm PIN") : null;
-        if (e2 != null) root.addView(e2, lp(MATCH, WRAP, 12));
-        final String label = mode == NEW ? "Set PIN" : mode == RESTORE ? "Restore" : "Unlock";
+        root.removeAllViews();
+        root.setGravity(Gravity.CENTER_HORIZONTAL);
+
+        final StringBuilder buf = new StringBuilder();
+        final String[] first = {null};                       // NEW: the PIN typed on step 1, waiting to be confirmed
+
+        // flexible space above the lock icon
+        root.addView(new View(this), new LinearLayout.LayoutParams(MATCH, dp(24), 0.6f));
+
+        // lock icon + title
+        root.addView(ico(R.drawable.ic_lock_pin, 32, GREEN), lp(dp(32), dp(32), 0));
+        final TextView title = text(mode == NEW ? "Create PIN" : "Enter PIN", 28, TXT, true);
+        title.setGravity(Gravity.CENTER);
+        root.addView(title, lp(MATCH, WRAP, 18));
+        String sub = mode == NEW ? "Use a different one from your phone lock."
+            : mode == RESTORE ? "Saved settings found. Enter your PIN to restore them." : null;
+        if (sub != null) {
+            TextView s = text(sub, 14, SUB, false);
+            s.setGravity(Gravity.CENTER);
+            root.addView(s, lp(MATCH, WRAP, 8));
+        }
+
+        // dots
+        final LinearLayout dots = hrow();
+        dots.setGravity(Gravity.CENTER);
+        drawDots(dots, 0);
+        root.addView(dots, lp(MATCH, WRAP, 44));
+
+        // inline error (fixed height so the keypad doesn't jump when it appears)
         final TextView err = errView();
-        final Button b = pill(label, GREEN, ON_GREEN, null);
-        b.setOnClickListener(v -> {
+        FrameLayout errBox = new FrameLayout(this);
+        errBox.addView(err, new FrameLayout.LayoutParams(MATCH, WRAP, Gravity.CENTER));
+        root.addView(errBox, lp(MATCH, dp(24), 14));
+
+        // the button is built first (the keys refer to it) but added to the screen after the keypad
+        final TextView btnLabel = text(mode == NEW ? "Next" : mode == RESTORE ? "Restore" : "Unlock", 18, ON_GREEN, true);
+        final LinearLayout btn = hrow();
+        btn.setBackground(ripple(GREEN, 30, ON_GREEN));
+        btn.setPadding(dp(26), 0, dp(24), 0);
+        btn.setClickable(true);
+        btn.addView(btnLabel, new LinearLayout.LayoutParams(0, WRAP, 1f));
+        btn.addView(ico(R.drawable.ic_chevrons, 16, 0x00000000), new LinearLayout.LayoutParams(dp(30), dp(16)));
+        ((ImageView) btn.getChildAt(1)).clearColorFilter();  // the chevrons carry their own colours (fading left to right)
+
+        final Runnable refresh = () -> drawDots(dots, buf.length());
+        final Runnable wrong = () -> {
+            buf.setLength(0);
+            drawDots(dots, 0);
+            shake(dots);
+            vibrateWrong();
+        };
+
+        View.OnClickListener digit = v -> {
+            if (buf.length() >= MAX_PIN) return;
             setErr(err, null);
-            final String p = e.getText().toString();
-            if (p.length() < 4) { setErr(err, "At least 4 digits"); return; }
+            buf.append(((TextView) v).getText());
+            v.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP);
+            refresh.run();
+        };
+
+        // keypad: 1-9, then 0 centred with a backspace key to its right
+        LinearLayout pad = vcol();
+        pad.setPadding(dp(32), 0, dp(32), 0);
+        String[][] rows = {{"1", "2", "3"}, {"4", "5", "6"}, {"7", "8", "9"}};
+        for (int r = 0; r < rows.length; r++) {
+            LinearLayout row = hrow();
+            for (String k : rows[r]) {
+                TextView key = numKey(k, digit);
+                row.addView(keyCell(key), new LinearLayout.LayoutParams(0, WRAP, 1f));
+            }
+            pad.addView(row, lp(MATCH, WRAP, r == 0 ? 0 : 14));
+        }
+        LinearLayout last = hrow();
+        last.addView(new View(this), new LinearLayout.LayoutParams(0, dp(58), 1f));
+        last.addView(keyCell(numKey("0", digit)), new LinearLayout.LayoutParams(0, WRAP, 1f));
+        ImageView back = new ImageView(this);
+        back.setImageResource(R.drawable.ic_backspace);
+        back.setColorFilter(SUB);
+        back.setScaleType(ImageView.ScaleType.CENTER);
+        back.setBackground(circleRipple(Color.TRANSPARENT, 0x33FFFFFF));
+        back.setClickable(true);
+        back.setContentDescription("Delete");
+        back.setOnClickListener(v -> {
+            if (buf.length() > 0) { buf.setLength(buf.length() - 1); setErr(err, null); refresh.run(); }
+        });
+        back.setOnLongClickListener(v -> { buf.setLength(0); setErr(err, null); refresh.run(); return true; });
+        last.addView(keyCell(back), new LinearLayout.LayoutParams(0, WRAP, 1f));
+        pad.addView(last, lp(MATCH, WRAP, 14));
+        root.addView(pad, lp(MATCH, WRAP, 6));
+
+        // flexible space, then the Unlock button near the bottom
+        root.addView(new View(this), new LinearLayout.LayoutParams(MATCH, dp(28), 1f));
+        LinearLayout.LayoutParams bl = new LinearLayout.LayoutParams(MATCH, dp(56));
+        bl.leftMargin = bl.rightMargin = dp(4);
+        root.addView(btn, bl);
+
+        btn.setOnClickListener(v -> {
+            setErr(err, null);
+            final String p = buf.toString();
+            if (p.length() < MIN_PIN) { setErr(err, "At least 4 digits"); shake(dots); return; }
             if (mode == NEW) {
-                if (!p.equals(e2.getText().toString())) { setErr(err, "PINs don't match"); return; }
+                if (first[0] == null) {                      // step 1 done: ask for it again
+                    first[0] = p; buf.setLength(0); drawDots(dots, 0);
+                    title.setText("Confirm PIN"); btnLabel.setText("Set PIN");
+                    return;
+                }
+                if (!p.equals(first[0])) {                   // mismatch: back to step 1
+                    first[0] = null; wrong.run();
+                    title.setText("Create PIN"); btnLabel.setText("Next");
+                    setErr(err, "PINs don't match");
+                    return;
+                }
                 sp.edit().putString("hash", Common.sha(p)).apply();
                 pin = p; checked = false; main(); backgroundSync();
             } else if (mode == LOCAL) {
-                if (!Common.sha(p).equals(sp.getString("hash", ""))) { setErr(err, "Wrong PIN"); vibrateWrong(); return; }
+                if (!Common.sha(p).equals(sp.getString("hash", ""))) { wrong.run(); setErr(err, "Wrong PIN"); return; }
                 pin = p; checked = false; main(); backgroundSync();
             } else {
-                b.setEnabled(false); b.setText("Restoring…");
+                btn.setEnabled(false); btnLabel.setText("Restoring…");
                 pull(p, r -> {
                     if (r == 1) { pin = p; checked = false; toast("Settings restored"); main(); }
-                    else { b.setEnabled(true); b.setText(label); setErr(err, r == 0 ? "Wrong PIN" : "Module did not answer. Try again."); if (r == 0) vibrateWrong(); }
+                    else {
+                        btn.setEnabled(true); btnLabel.setText("Restore");
+                        wrong.run();
+                        setErr(err, r == 0 ? "Wrong PIN" : "Module did not answer. Try again.");
+                    }
                 });
             }
         });
-        root.addView(b, lp(MATCH, dp(52), 16));
-        root.addView(err, lp(MATCH, WRAP, 10));
+    }
+
+    /** Round white key with a bold black digit. */
+    TextView numKey(String d, View.OnClickListener l) {
+        TextView t = text(d, 26, KEY_TXT, true);
+        t.setGravity(Gravity.CENTER);
+        t.setIncludeFontPadding(false);
+        t.setBackground(circleRipple(KEY, 0x33000000));
+        t.setClickable(true);
+        t.setOnClickListener(l);
+        return t;
     }
 
     /** After every unlock: make sure the module holds our full config (PIN, apps, folders, limit). */
