@@ -25,6 +25,7 @@ public class Shell {
     static final String[] ALIASES = {"/storage/emulated/0/", "/storage/self/primary/", "/sdcard/", "/data/media/0/"};
     static final String PREFIX = ".zkh_";   // legacy in-place hiding (older versions)
     static final String VAULT = ".zorken";
+    static final String EXT = ".zk";          // locked-container extension
     static final String KEYS = ".keys";       // copy of the key bundle inside every vault (survives an app reinstall)
     static final Object LOCK = new Object();
     static final java.util.concurrent.atomic.AtomicInteger applyActive = new java.util.concurrent.atomic.AtomicInteger();   // hide/restore running or waiting
@@ -128,8 +129,8 @@ public class Shell {
         File[] fs = dir == null ? null : dir.listFiles();
         if (fs != null) for (File f : fs) {
             String n = f.getName();
-            if (!n.startsWith(pre) || !n.endsWith(".zk")) continue;
-            String mid = n.substring(pre.length(), n.length() - 4);
+            if (!n.startsWith(pre) || !n.endsWith(EXT)) continue;
+            String mid = n.substring(pre.length(), n.length() - EXT.length());
             if (mid.matches("\\d{1,6}")) m.put(Integer.parseInt(mid), f);
         }
         return new ArrayList<>(m.values());
@@ -350,8 +351,8 @@ public class Shell {
                         File vault = plain.getParentFile();
                         List<File> have = containers(r[3]);
                         int n = 0;
-                        if (!have.isEmpty()) { String nm = have.get(have.size() - 1).getName(); n = Integer.parseInt(nm.substring(new File(r[3]).getName().length() + 1, nm.length() - 4)) + 1; }
-                        File out = new File(r[3] + "." + n + ".zk"), tmp = new File(out.getPath() + ".tmp");
+                        if (!have.isEmpty()) { String nm = have.get(have.size() - 1).getName(); n = Integer.parseInt(nm.substring(new File(r[3]).getName().length() + 1, nm.length() - EXT.length())) + 1; }
+                        File out = new File(r[3] + "." + n + EXT), tmp = new File(out.getPath() + ".tmp");
                         try {
                             long free = vault.getUsableSpace();
                             if (free < bytes + (64L << 20))
