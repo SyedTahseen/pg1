@@ -14,6 +14,7 @@ import android.os.Vibrator;
 import android.os.VibrationEffect;
 import android.animation.ObjectAnimator;
 import android.provider.DocumentsContract;
+import android.text.InputFilter;
 import android.text.InputType;
 import android.view.*;
 import android.widget.*;
@@ -360,18 +361,19 @@ public class MainActivity extends Activity {
         e.setGravity(Gravity.CENTER);
         e.setInputType(InputType.TYPE_CLASS_NUMBER | InputType.TYPE_NUMBER_VARIATION_PASSWORD);
         e.setTypeface(MED);
+        e.setFilters(new InputFilter[]{new InputFilter.LengthFilter(PIN_LEN)});
         e.setBackground(outline(bg == CARD ? 0xFF111113 : bg, 0xFF2E2E31, 20));
         e.setPadding(dp(16), dp(16), dp(16), dp(16));
         return e;
     }
 
-    static final int MAX_PIN = 12, MIN_PIN = 4;
+    static final int PIN_LEN = 4;
     static final int KEY = 0xFFFFFFFF, KEY_TXT = 0xFF000000, DOT_OFF = 0xFF5C5C60;
 
     /** Redraws the PIN dots: always at least 4, one more per digit beyond that; the first `filled` are lime. */
     void drawDots(LinearLayout row, int filled) {
         row.removeAllViews();
-        int n = Math.max(MIN_PIN, filled);
+        int n = PIN_LEN;
         for (int i = 0; i < n; i++) {
             View d = new View(this);
             GradientDrawable g = new GradientDrawable();
@@ -403,6 +405,8 @@ public class MainActivity extends Activity {
         root.setGravity(Gravity.CENTER_HORIZONTAL);
 
         final StringBuilder buf = new StringBuilder();
+        final Runnable[] submit = new Runnable[1];
+        final boolean[] busy = {false};
         final String[] first = {null};                       // NEW: the PIN typed on step 1, waiting to be confirmed
 
         // flexible space above the lock icon
@@ -433,16 +437,6 @@ public class MainActivity extends Activity {
         errBox.addView(err, new FrameLayout.LayoutParams(MATCH, WRAP, Gravity.CENTER));
         root.addView(errBox, lp(MATCH, dp(24), 14));
 
-        // the button is built first (the keys refer to it) but added to the screen after the keypad
-        final TextView btnLabel = text(mode == NEW ? "Next" : mode == RESTORE ? "Restore" : "Unlock", 18, ON_GREEN, true);
-        final LinearLayout btn = hrow();
-        btn.setBackground(ripple(GREEN, 30, ON_GREEN));
-        btn.setPadding(dp(26), 0, dp(24), 0);
-        btn.setClickable(true);
-        btn.addView(btnLabel, new LinearLayout.LayoutParams(0, WRAP, 1f));
-        btn.addView(ico(R.drawable.ic_chevrons, 16, 0x00000000), new LinearLayout.LayoutParams(dp(30), dp(16)));
-        ((ImageView) btn.getChildAt(1)).clearColorFilter();  // the chevrons carry their own colours (fading left to right)
-
         final Runnable refresh = () -> drawDots(dots, buf.length());
         final Runnable wrong = () -> {
             buf.setLength(0);
@@ -452,11 +446,12 @@ public class MainActivity extends Activity {
         };
 
         View.OnClickListener digit = v -> {
-            if (buf.length() >= MAX_PIN) return;
+            if (busy[0] || buf.length() >= PIN_LEN) return;
             setErr(err, null);
             buf.append(((TextView) v).getText());
             v.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP);
             refresh.run();
+            if (buf.length() == PIN_LEN) v.postDelayed(() -> submit[0].run(), 120);   // let the last dot fill first
         };
 
         // keypad: 1-9, then 0 centred with a backspace key to its right
@@ -482,32 +477,28 @@ public class MainActivity extends Activity {
         back.setClickable(true);
         back.setContentDescription("Delete");
         back.setOnClickListener(v -> {
-            if (buf.length() > 0) { buf.setLength(buf.length() - 1); setErr(err, null); refresh.run(); }
+            if (!busy[0] && buf.length() > 0) { buf.setLength(buf.length() - 1); setErr(err, null); refresh.run(); }
         });
-        back.setOnLongClickListener(v -> { buf.setLength(0); setErr(err, null); refresh.run(); return true; });
+        back.setOnLongClickListener(v -> { if (busy[0]) return true; buf.setLength(0); setErr(err, null); refresh.run(); return true; });
         last.addView(keyCell(back), new LinearLayout.LayoutParams(0, WRAP, 1f));
         pad.addView(last, lp(MATCH, WRAP, 14));
         root.addView(pad, lp(MATCH, WRAP, 6));
 
-        // flexible space, then the Unlock button near the bottom
+        // flexible space under the keypad
         root.addView(new View(this), new LinearLayout.LayoutParams(MATCH, dp(28), 1f));
-        LinearLayout.LayoutParams bl = new LinearLayout.LayoutParams(MATCH, dp(56));
-        bl.leftMargin = bl.rightMargin = dp(4);
-        root.addView(btn, bl);
 
-        btn.setOnClickListener(v -> {
-            setErr(err, null);
+        // runs by itself as soon as the 4th digit is in - there is no Unlock button
+        submit[0] = () -> {
             final String p = buf.toString();
-            if (p.length() < MIN_PIN) { setErr(err, "At least 4 digits"); shake(dots); return; }
             if (mode == NEW) {
                 if (first[0] == null) {                      // step 1 done: ask for it again
                     first[0] = p; buf.setLength(0); drawDots(dots, 0);
-                    title.setText("Confirm PIN"); btnLabel.setText("Set PIN");
+                    title.setText("Confirm PIN");
                     return;
                 }
                 if (!p.equals(first[0])) {                   // mismatch: back to step 1
                     first[0] = null; wrong.run();
-                    title.setText("Create PIN"); btnLabel.setText("Next");
+                    title.setText("Create PIN");
                     setErr(err, "PINs don't match");
                     return;
                 }
@@ -517,17 +508,17 @@ public class MainActivity extends Activity {
                 if (!Common.sha(p).equals(sp.getString("hash", ""))) { wrong.run(); setErr(err, "Wrong PIN"); return; }
                 pin = p; checked = false; main(); backgroundSync();
             } else {
-                btn.setEnabled(false); btnLabel.setText("Restoring…");
+                busy[0] = true; title.setText("Restoring\u2026");
                 pull(p, r -> {
                     if (r == 1) { pin = p; checked = false; toast("Settings restored"); main(); }
                     else {
-                        btn.setEnabled(true); btnLabel.setText("Restore");
+                        busy[0] = false; title.setText("Enter PIN");
                         wrong.run();
                         setErr(err, r == 0 ? "Wrong PIN" : "Module did not answer. Try again.");
                     }
                 });
             }
-        });
+        };
     }
 
     /** Round white key with a bold black digit. */
@@ -563,7 +554,7 @@ public class MainActivity extends Activity {
             box, "Restore", (d, ok) -> {
                 setErr(err, null);
                 final String p = e.getText().toString();
-                if (p.length() < 4) { setErr(err, "At least 4 digits"); return; }
+                if (p.length() != PIN_LEN) { setErr(err, "PIN is 4 digits"); return; }
                 ok.setEnabled(false);
                 pull(p, r -> {
                     if (r == 1) { pin = p; checked = false; d.dismiss(); toast("Settings restored"); main(); }
@@ -955,7 +946,7 @@ public class MainActivity extends Activity {
             setErr(err, null);
             final String o = cur.getText().toString(), n = nw.getText().toString();
             if (!Common.sha(o).equals(sp.getString("hash", ""))) { setErr(err, "Current PIN is wrong"); vibrateWrong(); return; }
-            if (n.length() < 4) { setErr(err, "New PIN needs at least 4 digits"); return; }
+            if (n.length() != PIN_LEN) { setErr(err, "New PIN must be 4 digits"); return; }
             if (!n.equals(cf.getText().toString())) { setErr(err, "New PINs don't match"); return; }
             if (n.equals(o)) { setErr(err, "New PIN is the same as the current one"); return; }
             ok.setEnabled(false);
