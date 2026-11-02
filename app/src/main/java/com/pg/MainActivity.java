@@ -798,12 +798,177 @@ public class MainActivity extends Activity {
     void settingsList() {
         Set<String> apps = set("apps");
         root.addView(new View(this), new LinearLayout.LayoutParams(MATCH, dp(14)));
-        row(R.drawable.ic_apps, "Apps to hide", apps.isEmpty() ? "None selected" : apps.size() + " selected", 18,
-            true, v -> pickApps(), null);
-        row(R.drawable.ic_folder, "Folders & files", filesSummary(), 18, true, v -> filesSheet(), null);
+        accordion("apps", R.drawable.ic_apps, "Apps to hide", apps.isEmpty() ? "None selected" : apps.size() + " selected", 18, appsBody());
+        accordion("files", R.drawable.ic_folder, "Folders & files", filesSummary(), 18, filesBody());
         row(R.drawable.ic_lock, "Wrong attempts before hiding", null, 15, false, null, stepper());
         row(R.drawable.ic_key, "PIN", null, 18, false, null, outlineBtn("Change PIN", v -> changePin()));
-        row(R.drawable.ic_doc, "View last file-hiding log", null, 16, true, v -> showLog(), null);
+        accordion("log", R.drawable.ic_doc, "View last file-hiding log", null, 16, logBody());
+    }
+
+    // ---- accordion rows: tap the row (or its chevron) to expand / collapse the panel under it ----
+    /** Which accordions are open. All start expanded; the state survives main() rebuilding the screen. */
+    final Set<String> open = new HashSet<>(Arrays.asList("apps", "files", "log"));
+
+    LinearLayout panel() {
+        LinearLayout p = vcol();
+        p.setBackground(rect(CARD, 20));
+        p.setPadding(dp(14), dp(14), dp(14), dp(14));
+        return p;
+    }
+
+    void accordion(final String key, int iconRes, String title, String sub, int titleSp, final View body) {
+        LinearLayout r = hrow();
+        r.setPadding(dp(4), dp(14), dp(4), dp(14));
+        r.setMinimumHeight(dp(68));
+        r.addView(ico(iconRes, 24, TXT));
+        LinearLayout col = vcol();
+        col.addView(text(title, titleSp, TXT, MED));
+        if (sub != null) {
+            TextView st = text(sub, 15, SUB, false);
+            st.setPadding(0, dp(2), 0, 0);
+            col.addView(st);
+        }
+        LinearLayout.LayoutParams cp = new LinearLayout.LayoutParams(0, WRAP, 1f);
+        cp.leftMargin = dp(24);
+        r.addView(col, cp);
+        final ImageView chev = ico(R.drawable.ic_chevron, 22, TXT);
+        boolean isOpen = open.contains(key);
+        chev.setRotation(isOpen ? 90f : 0f);                  // points right when closed, down when open
+        body.setVisibility(isOpen ? View.VISIBLE : View.GONE);
+        r.addView(chev);
+        r.setBackground(plainRipple());
+        r.setOnClickListener(v -> {
+            boolean o = !open.contains(key);
+            if (o) open.add(key); else open.remove(key);
+            android.transition.TransitionManager.beginDelayedTransition(root);
+            body.setVisibility(o ? View.VISIBLE : View.GONE);
+            chev.animate().rotation(o ? 90f : 0f).setDuration(180).start();
+        });
+        root.addView(r, new LinearLayout.LayoutParams(MATCH, WRAP));
+        LinearLayout.LayoutParams bp = new LinearLayout.LayoutParams(MATCH, WRAP);
+        bp.bottomMargin = dp(14);
+        root.addView(body, bp);
+        View d = new View(this);
+        d.setBackgroundColor(LINE);
+        root.addView(d, new LinearLayout.LayoutParams(MATCH, dp(1)));
+    }
+
+    /** Wraps its children left to right, like text. */
+    static class Flow extends ViewGroup {
+        final int gap;
+        Flow(Context c, int gap) { super(c); this.gap = gap; }
+        @Override protected void onMeasure(int ws, int hs) {
+            int w = MeasureSpec.getSize(ws), x = 0, y = 0, rowH = 0;
+            for (int i = 0; i < getChildCount(); i++) {
+                View c = getChildAt(i);
+                ViewGroup.LayoutParams cl = c.getLayoutParams();
+                c.measure(MeasureSpec.makeMeasureSpec(cl.width, MeasureSpec.EXACTLY), MeasureSpec.makeMeasureSpec(cl.height, MeasureSpec.EXACTLY));
+                int cw = c.getMeasuredWidth(), ch = c.getMeasuredHeight();
+                if (x > 0 && x + cw > w) { x = 0; y += rowH + gap; rowH = 0; }
+                x += cw + gap; rowH = Math.max(rowH, ch);
+            }
+            setMeasuredDimension(w, y + rowH);
+        }
+        @Override protected void onLayout(boolean changed, int l, int t, int r, int b) {
+            int w = r - l, x = 0, y = 0, rowH = 0;
+            for (int i = 0; i < getChildCount(); i++) {
+                View c = getChildAt(i);
+                int cw = c.getMeasuredWidth(), ch = c.getMeasuredHeight();
+                if (x > 0 && x + cw > w) { x = 0; y += rowH + gap; rowH = 0; }
+                c.layout(x, y, x + cw, y + ch);
+                x += cw + gap; rowH = Math.max(rowH, ch);
+            }
+        }
+    }
+
+    /** Icons of the selected apps, plus the button that opens the app chooser window. */
+    View appsBody() {
+        LinearLayout p = panel();
+        final PackageManager pm = getPackageManager();
+        List<String[]> sel = new ArrayList<>();                 // {label, pkg}
+        for (String pkg : set("apps")) {
+            String label = pkg;
+            try { label = String.valueOf(pm.getApplicationInfo(pkg, MATCH_HIDDEN).loadLabel(pm)); } catch (Exception ignored) {}
+            sel.add(new String[]{label, pkg});
+        }
+        Collections.sort(sel, (a, b) -> a[0].compareToIgnoreCase(b[0]));
+        if (sel.isEmpty()) {
+            p.addView(text("No apps selected yet.", 14, SUB, false));
+        } else {
+            Flow f = new Flow(this, dp(12));
+            for (String[] a : sel) {
+                ImageView iv = new ImageView(this);
+                iv.setImageDrawable(icon(a[1]));
+                iv.setContentDescription(a[0]);
+                iv.setLayoutParams(new ViewGroup.LayoutParams(dp(44), dp(44)));
+                f.addView(iv);
+            }
+            p.addView(f, new LinearLayout.LayoutParams(MATCH, WRAP));
+        }
+        p.addView(pill("Choose apps", CARD2, TXT, v -> pickApps()), lp(MATCH, dp(46), 14));
+        return p;
+    }
+
+    /** Selected folders and files (each with an x to remove it) and the Add folder / Add file buttons. */
+    View filesBody() {
+        LinearLayout p = panel();
+        final TextView err = errView();
+        Set<String> paths = new TreeSet<>(set("paths"));
+        if (paths.isEmpty()) p.addView(text("Nothing selected yet.", 14, SUB, false));
+        for (final String path : paths) {
+            LinearLayout r = hrow();
+            r.setPadding(0, dp(8), 0, dp(8));
+            String name = path.substring(path.lastIndexOf('/') + 1);
+            r.addView(ico(name.contains(".") ? R.drawable.ic_doc : R.drawable.ic_folder, 22, SUB));
+            LinearLayout col = vcol();
+            col.addView(text(name, 15, TXT, MED));
+            col.addView(text(path, 11, SUB, false));
+            LinearLayout.LayoutParams cp = new LinearLayout.LayoutParams(0, WRAP, 1f);
+            cp.leftMargin = dp(14);
+            r.addView(col, cp);
+            ImageView x = ico(R.drawable.ic_close, 20, SUB);
+            x.setPadding(dp(8), dp(8), dp(8), dp(8));
+            x.setLayoutParams(new LinearLayout.LayoutParams(dp(36), dp(36)));
+            x.setBackground(plainRipple());
+            x.setContentDescription("Remove");
+            x.setOnClickListener(v -> {
+                if (sp.getBoolean("hidden", false)) { setErr(err, "Restore first, then edit the list"); return; }
+                Set<String> s2 = set("paths"); s2.remove(path);
+                sp.edit().putStringSet("paths", s2).apply(); send("config");
+                main();
+            });
+            r.addView(x);
+            p.addView(r);
+        }
+        p.addView(err, lp(MATCH, WRAP, 6));
+        LinearLayout btns = hrow();
+        Button f1 = pill("Add folder", CARD2, TXT, v -> startActivityForResult(new Intent(Intent.ACTION_OPEN_DOCUMENT_TREE), 1));
+        Button f2 = pill("Add file", CARD2, TXT, v -> startActivityForResult(
+            new Intent(Intent.ACTION_OPEN_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE).setType("*/*"), 2));
+        LinearLayout.LayoutParams l1 = new LinearLayout.LayoutParams(0, MATCH, 1f);
+        l1.rightMargin = dp(6);
+        LinearLayout.LayoutParams l2 = new LinearLayout.LayoutParams(0, MATCH, 1f);
+        l2.leftMargin = dp(6);
+        btns.addView(f1, l1);
+        btns.addView(f2, l2);
+        p.addView(btns, lp(MATCH, dp(46), 10));
+        return p;
+    }
+
+    /** The last file-hiding log, in place, with a Copy button. */
+    View logBody() {
+        LinearLayout p = panel();
+        final String log = sp.getString("log", "Nothing yet. Tap Hide now first.");
+        TextView lt = text(log, 12, SUB, false);
+        lt.setTextIsSelectable(true);
+        ScrollView box = scroller(lt);
+        box.setOnTouchListener((v, e) -> { v.getParent().requestDisallowInterceptTouchEvent(true); return false; });
+        p.addView(box);
+        p.addView(pill("Copy", CARD2, TXT, v -> {
+            ((ClipboardManager) getSystemService(Context.CLIPBOARD_SERVICE)).setPrimaryClip(ClipData.newPlainText("PrivacyGuard log", log));
+            toast("Log copied");
+        }), lp(MATCH, dp(46), 12));
+        return p;
     }
 
     void row(int iconRes, String title, String sub, int titleSp, boolean chevron, View.OnClickListener click, View trailing) {
@@ -880,60 +1045,6 @@ public class MainActivity extends Activity {
         return b;
     }
 
-    void showLog() {
-        TextView lt = text(sp.getString("log", "Nothing yet. Tap Hide now first."), 12, SUB, false);
-        lt.setTextIsSelectable(true);
-        sheet("Log", null, scroller(lt), null, null);
-    }
-
-    /** Folders & files list: remove entries, add a folder or a file. */
-    void filesSheet() {
-        final Dialog[] dref = new Dialog[1];
-        LinearLayout list = vcol();
-        final TextView err = errView();
-        Set<String> paths = new TreeSet<>(set("paths"));
-        if (paths.isEmpty()) list.addView(text("Nothing selected yet.", 14, SUB, false));
-        for (final String p : paths) {
-            LinearLayout r = hrow();
-            r.setPadding(0, dp(10), 0, dp(10));
-            String name = p.substring(p.lastIndexOf('/') + 1);
-            r.addView(ico(name.contains(".") ? R.drawable.ic_doc : R.drawable.ic_folder, 22, SUB));
-            LinearLayout col = vcol();
-            col.addView(text(name, 15, TXT, MED));
-            col.addView(text(p, 11, SUB, false));
-            LinearLayout.LayoutParams cp = new LinearLayout.LayoutParams(0, WRAP, 1f);
-            cp.leftMargin = dp(14);
-            r.addView(col, cp);
-            ImageView x = ico(R.drawable.ic_close, 20, SUB);
-            x.setPadding(dp(8), dp(8), dp(8), dp(8));
-            x.setLayoutParams(new LinearLayout.LayoutParams(dp(36), dp(36)));
-            x.setBackground(plainRipple());
-            x.setOnClickListener(v -> {
-                if (sp.getBoolean("hidden", false)) { setErr(err, "Restore first, then edit the list"); return; }
-                Set<String> s = set("paths"); s.remove(p);
-                sp.edit().putStringSet("paths", s).apply(); send("config");
-                dref[0].dismiss(); main(); filesSheet();
-            });
-            r.addView(x);
-            list.addView(r);
-        }
-        LinearLayout body = vcol();
-        body.addView(scroller(list));
-        body.addView(err, lp(MATCH, WRAP, 8));
-        LinearLayout btns = hrow();
-        Button f1 = pill("Add folder", CARD2, TXT, v -> { dref[0].dismiss(); startActivityForResult(new Intent(Intent.ACTION_OPEN_DOCUMENT_TREE), 1); });
-        Button f2 = pill("Add file", CARD2, TXT, v -> { dref[0].dismiss(); startActivityForResult(
-            new Intent(Intent.ACTION_OPEN_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE).setType("*/*"), 2); });
-        LinearLayout.LayoutParams l1 = new LinearLayout.LayoutParams(0, MATCH, 1f);
-        l1.rightMargin = dp(6);
-        LinearLayout.LayoutParams l2 = new LinearLayout.LayoutParams(0, MATCH, 1f);
-        l2.leftMargin = dp(6);
-        btns.addView(f1, l1);
-        btns.addView(f2, l2);
-        body.addView(btns, lp(MATCH, dp(48), 12));
-        dref[0] = sheet("Folders & files", null, body, null, null);
-    }
-
     void changePin() {
         final EditText cur = pinField("Current PIN", CARD2), nw = pinField("New PIN", CARD2), cf = pinField("Confirm new PIN", CARD2);
         cur.setTextSize(18); nw.setTextSize(18); cf.setTextSize(18);
@@ -1004,7 +1115,7 @@ public class MainActivity extends Activity {
         Set<String> s = set("paths"); s.add(path);
         sp.edit().putStringSet("paths", s).apply();
         send("config");
-        if (pin != null) { main(); filesSheet(); }
+        if (pin != null) main();
     }
 
     /** Converts a picker URI to a real path like /storage/emulated/0/DCIM/Private. */
