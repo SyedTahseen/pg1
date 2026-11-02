@@ -409,8 +409,9 @@ public class MainActivity extends Activity {
         final boolean[] busy = {false};
         final String[] first = {null};                       // NEW: the PIN typed on step 1, waiting to be confirmed
 
-        // flexible space above the lock icon
-        root.addView(new View(this), new LinearLayout.LayoutParams(MATCH, dp(24), 0.6f));
+        // equal flexible space above and below keeps the whole PIN block vertically centred
+        // (48 vs 24 dp bases offset the 24 dp bottom padding of the root layout)
+        root.addView(new View(this), new LinearLayout.LayoutParams(MATCH, dp(48), 1f));
 
         // lock icon + title
         root.addView(ico(R.drawable.ic_lock_pin, 32, GREEN), lp(dp(32), dp(32), 0));
@@ -485,7 +486,7 @@ public class MainActivity extends Activity {
         root.addView(pad, lp(MATCH, WRAP, 6));
 
         // flexible space under the keypad
-        root.addView(new View(this), new LinearLayout.LayoutParams(MATCH, dp(28), 1f));
+        root.addView(new View(this), new LinearLayout.LayoutParams(MATCH, dp(24), 1f));
 
         // runs by itself as soon as the 4th digit is in - there is no Unlock button
         submit[0] = () -> {
