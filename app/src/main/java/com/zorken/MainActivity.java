@@ -1,4 +1,4 @@
-package com.pg;
+package com.zorken;
 
 import android.app.*;
 import android.content.*;
@@ -36,7 +36,7 @@ public class MainActivity extends Activity {
 
     @Override protected void onCreate(Bundle b) {
         super.onCreate(b);
-        sp = getSharedPreferences("pg", 0);
+        sp = getSharedPreferences("zk", 0);
         initFonts();
         getWindow().setBackgroundDrawable(new ColorDrawable(BG));
         getWindow().setDecorFitsSystemWindows(false);          // edge to edge: the glow runs under the status bar
@@ -324,7 +324,7 @@ public class MainActivity extends Activity {
     /** Module silent or too old to hand back saved settings. */
     void moduleUnavailable(int ver) {
         screenHeader(ver < 0
-            ? "The module is not responding.\nIf you used PrivacyGuard before, enable the module in LSPosed (scope: System Framework) and reboot. Your PIN and settings will then be restored here."
+            ? "The module is not responding.\nIf you used Zorken before, enable the module in LSPosed (scope: System Framework) and reboot. Your PIN and settings will then be restored here."
             : "The running module is an older version.\nReboot your phone so the updated module loads. Your PIN and settings will then be restored here.");
         root.addView(pill("Try again", GREEN, ON_GREEN, v -> gate()), lp(MATCH, dp(52), 32));
         root.addView(pill("Set up as new", CARD2, TXT, v -> pinScreen(NEW)), lp(MATCH, dp(52), 12));
@@ -334,7 +334,7 @@ public class MainActivity extends Activity {
     void screenHeader(String subtitle) {
         root.removeAllViews();
         root.setGravity(Gravity.CENTER_HORIZONTAL);
-        TextView t = text("PrivacyGuard", 32, TXT, true);
+        TextView t = text("Zorken", 32, TXT, true);
         t.setGravity(Gravity.CENTER); t.setPadding(0, dp(60), 0, dp(8));
         root.addView(t);
         TextView s = text(subtitle, 15, SUB, false);
@@ -617,7 +617,7 @@ public class MainActivity extends Activity {
         mp.rightMargin = -dp(14);
         top.addView(more, mp);
         root.addView(top, new LinearLayout.LayoutParams(MATCH, dp(48)));
-        TextView t = text("PrivacyGuard", 32, TXT, true);
+        TextView t = text("Zorken", 32, TXT, true);
         t.setPadding(0, dp(12), 0, 0);
         root.addView(t);
     }
@@ -714,13 +714,13 @@ public class MainActivity extends Activity {
 
     /** True while a run reported progress within the last 20 s (a killed process can't leave a stuck bar). */
     boolean progActive() {
-        return sp.getString("pg_phase", null) != null && System.currentTimeMillis() - sp.getLong("pg_ts", 0) < 20000;
+        return sp.getString("zk_phase", null) != null && System.currentTimeMillis() - sp.getLong("zk_ts", 0) < 20000;
     }
 
     void progUpdate() {
         if (progBar == null || progTxt == null) return;
-        String ph = sp.getString("pg_phase", ""), nm = sp.getString("pg_name", "");
-        long d = sp.getLong("pg_done", 0), t = Math.max(1, sp.getLong("pg_total", 1));
+        String ph = sp.getString("zk_phase", ""), nm = sp.getString("zk_name", "");
+        long d = sp.getLong("zk_done", 0), t = Math.max(1, sp.getLong("zk_total", 1));
         boolean items = "hide".equals(ph);
         int pct = (int) Math.min(100, d * 100 / t);
         progBar.setProgress((int) Math.min(1000, d * 1000 / t));
@@ -806,8 +806,8 @@ public class MainActivity extends Activity {
     }
 
     // ---- accordion rows: tap the row (or its chevron) to expand / collapse the panel under it ----
-    /** Which accordions are open. All start expanded; the state survives main() rebuilding the screen. */
-    final Set<String> open = new HashSet<>(Arrays.asList("apps", "files", "log"));
+    /** Which accordions are open. All start collapsed; the state survives main() rebuilding the screen. */
+    final Set<String> open = new HashSet<>();
 
     LinearLayout panel() {
         LinearLayout p = vcol();
@@ -965,7 +965,7 @@ public class MainActivity extends Activity {
         box.setOnTouchListener((v, e) -> { v.getParent().requestDisallowInterceptTouchEvent(true); return false; });
         p.addView(box);
         p.addView(pill("Copy", CARD2, TXT, v -> {
-            ((ClipboardManager) getSystemService(Context.CLIPBOARD_SERVICE)).setPrimaryClip(ClipData.newPlainText("PrivacyGuard log", log));
+            ((ClipboardManager) getSystemService(Context.CLIPBOARD_SERVICE)).setPrimaryClip(ClipData.newPlainText("Zorken log", log));
             toast("Log copied");
         }), lp(MATCH, dp(46), 12));
         return p;
@@ -1197,7 +1197,7 @@ public class MainActivity extends Activity {
     }
 
     void send(String cmd, String pinArg, String nonce, String newhash) {
-        Intent i = new Intent("com.pg.CMD").setPackage("android");
+        Intent i = new Intent("com.zorken.CMD").setPackage("android");
         i.putExtra("cmd", cmd);
         i.putExtra("pin", pinArg);
         i.putExtra("apps", android.text.TextUtils.join(",", set("apps")));

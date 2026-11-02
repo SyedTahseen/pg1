@@ -1,4 +1,4 @@
-package com.pg;
+package com.zorken;
 
 import android.content.*;
 import android.os.Build;
@@ -12,25 +12,25 @@ import java.util.function.BooleanSupplier;
 
 /**
  * Hides a folder/file in two steps:
- *  1. instantly moves it into the hidden vault folder ".pg" at the root of the same storage volume
- *     (/storage/emulated/0/.pg/<id>_<name>); a same-volume move is a plain rename;
+ *  1. instantly moves it into the hidden vault folder ".zorken" at the root of the same storage volume
+ *     (/storage/emulated/0/.zorken/<id>_<name>); a same-volume move is a plain rename;
  *  2. in the background (LockService -> protectAll()) packs it into encrypted containers
- *     (/storage/emulated/0/.pg/<id>.<n>.pge) in small steps: each container is verified before the plain files it
+ *     (/storage/emulated/0/.zorken/<id>.<n>.zk) in small steps: each container is verified before the plain files it
  *     holds are deleted, so an interruption never loses progress.
  * Restore needs the PIN to open containers; items still waiting to be locked (or hidden by older versions
- * with the in-place ".pgh_" name) restore without it.
+ * with the in-place ".zkh_" name) restore without it.
  * Order of attempts for a move: normal rename -> (reason logged) -> optional root "mv" fallback -> file-by-file move.
  */
 public class Shell {
     static final String[] ALIASES = {"/storage/emulated/0/", "/storage/self/primary/", "/sdcard/", "/data/media/0/"};
-    static final String PREFIX = ".pgh_";   // legacy in-place hiding (older versions)
-    static final String VAULT = ".pg";
+    static final String PREFIX = ".zkh_";   // legacy in-place hiding (older versions)
+    static final String VAULT = ".zorken";
     static final String KEYS = ".keys";       // copy of the key bundle inside every vault (survives an app reinstall)
     static final Object LOCK = new Object();
     static final java.util.concurrent.atomic.AtomicInteger applyActive = new java.util.concurrent.atomic.AtomicInteger();   // hide/restore running or waiting
     static volatile boolean stopReq;           // hide/restore ask a running protect() to pause
 
-    /** returns {realPath, plainStagePath (inside .pg), legacyHiddenPath (old in-place name), containerPrefix} or null if the path isn't allowed. */
+    /** returns {realPath, plainStagePath (inside .zorken), legacyHiddenPath (old in-place name), containerPrefix} or null if the path isn't allowed. */
     static String[] resolve(String p) {
         String base = null, rel = null;
         for (String a : ALIASES) if (p.startsWith(a)) { base = "/storage/emulated/0"; rel = p.substring(a.length()); break; }
@@ -106,9 +106,9 @@ public class Shell {
         } catch (Exception e) { log.append("  rename refused: ").append(e).append('\n'); }
         String lf = lower(from.getPath()), lt = lower(to.getPath());
         if (lf != null && lt != null && !lf.contains("'") && !lt.contains("'")) {
-            String o = su("mv '" + lf + "' '" + lt + "' && echo PGOK");
-            if (o != null && o.contains("PGOK")) { log.append("  done with root fallback\n"); return true; }
-            log.append("  root fallback not available (allow PrivacyGuard in KernelSU Superuser to enable it)\n");
+            String o = su("mv '" + lf + "' '" + lt + "' && echo ZKOK");
+            if (o != null && o.contains("ZKOK")) { log.append("  done with root fallback\n"); return true; }
+            log.append("  root fallback not available (allow Zorken in KernelSU Superuser to enable it)\n");
         }
         if (from.isDirectory()) {
             boolean ok = merge(from, to);
@@ -120,7 +120,7 @@ public class Shell {
 
     // ------------------------------------------------------------------ containers & keys
 
-    /** Existing containers of one item (<prefix>.<n>.pge), oldest first. */
+    /** Existing containers of one item (<prefix>.<n>.zk), oldest first. */
     static List<File> containers(String prefix) {
         File p = new File(prefix), dir = p.getParentFile();
         String pre = p.getName() + ".";
@@ -128,7 +128,7 @@ public class Shell {
         File[] fs = dir == null ? null : dir.listFiles();
         if (fs != null) for (File f : fs) {
             String n = f.getName();
-            if (!n.startsWith(pre) || !n.endsWith(".pge")) continue;
+            if (!n.startsWith(pre) || !n.endsWith(".zk")) continue;
             String mid = n.substring(pre.length(), n.length() - 4);
             if (mid.matches("\\d{1,6}")) m.put(Integer.parseInt(mid), f);
         }
@@ -136,7 +136,7 @@ public class Shell {
     }
 
     static Set<String> pathSet(Context c) {
-        return new HashSet<>(c.getSharedPreferences("pg", 0).getStringSet("paths", new HashSet<String>()));
+        return new HashSet<>(c.getSharedPreferences("zk", 0).getStringSet("paths", new HashSet<String>()));
     }
 
     /** Vault folders to look at: the primary storage one plus the one of every selected path. */
@@ -170,7 +170,7 @@ public class Shell {
 
     /** The key bundle: the app's own copy, else the copy kept in a vault (after a reinstall). */
     static byte[] bundle(Context c) {
-        SharedPreferences sp = c.getSharedPreferences("pg", 0);
+        SharedPreferences sp = c.getSharedPreferences("zk", 0);
         String b64 = sp.getString("vbundle", null);
         if (b64 != null) try { return java.util.Base64.getDecoder().decode(b64); } catch (Exception ignored) {}
         for (File v : vaultDirs(pathSet(c))) {
@@ -186,14 +186,14 @@ public class Shell {
         return null;
     }
 
-    static byte[] vkey(Context c) { return Common.unhex(c.getSharedPreferences("pg", 0).getString("vkey", null)); }
+    static byte[] vkey(Context c) { return Common.unhex(c.getSharedPreferences("zk", 0).getString("vkey", null)); }
 
     static void storeBundle(Context c, byte[] b) {
-        c.getSharedPreferences("pg", 0).edit().putString("vbundle", java.util.Base64.getEncoder().encodeToString(b)).commit();
+        c.getSharedPreferences("zk", 0).edit().putString("vbundle", java.util.Base64.getEncoder().encodeToString(b)).commit();
         for (File v : vaultDirs(pathSet(c))) if (v.isDirectory()) writeKeys(v, b);
     }
 
-    public static boolean hasKey(Context c) { return c.getSharedPreferences("pg", 0).getString("vbundle", null) != null; }
+    public static boolean hasKey(Context c) { return c.getSharedPreferences("zk", 0).getString("vbundle", null) != null; }
 
     /** Called after a correct PIN was accepted by the module: makes sure a lock key exists (and is bound to the device secret). */
     public static void ensureBundle(Context c, String pin) {
@@ -220,7 +220,7 @@ public class Shell {
         catch (IllegalStateException e) { throw new IOException("device key missing - enable the module, reboot, open the app once"); }
     }
 
-    /** Hidden items that still have a plain copy in .pg (not locked yet), as resolve() arrays. */
+    /** Hidden items that still have a plain copy in .zorken (not locked yet), as resolve() arrays. */
     static List<String[]> waiting(Context c) {
         List<String[]> out = new ArrayList<>();
         for (String p : pathSet(c)) { String[] r = resolve(p); if (r != null && new File(r[1]).exists()) out.add(r); }
@@ -243,7 +243,7 @@ public class Shell {
         return f.delete() && ok;
     }
 
-    /** Removes .pg when nothing is left in it (and the key copy with it). */
+    /** Removes .zorken when nothing is left in it (and the key copy with it). */
     static void cleanVault(File vault) {
         String[] kids = vault.list();
         if (kids == null) return;
@@ -291,14 +291,14 @@ public class Shell {
         long now = System.currentTimeMillis();
         if (!force && now - pLast < 400) return;
         pLast = now;
-        c.getSharedPreferences("pg", 0).edit().putString("pg_phase", pPhase).putString("pg_name", pName == null ? "" : pName)
-            .putLong("pg_done", Math.min(pDone, pTotal)).putLong("pg_total", pTotal).putLong("pg_ts", now).apply();
+        c.getSharedPreferences("zk", 0).edit().putString("zk_phase", pPhase).putString("zk_name", pName == null ? "" : pName)
+            .putLong("zk_done", Math.min(pDone, pTotal)).putLong("zk_total", pTotal).putLong("zk_ts", now).apply();
     }
     /** Ends the run only if it is still the given phase (a hide/restore may have taken over from a paused lock). */
     static synchronized void progEnd(Context c, String phase) {
         if (phase != null && !phase.equals(pPhase)) return;
         Vault.PROGRESS = null; pPhase = null;
-        if (c != null) c.getSharedPreferences("pg", 0).edit().remove("pg_phase").remove("pg_name").remove("pg_done").remove("pg_total").remove("pg_ts").apply();
+        if (c != null) c.getSharedPreferences("zk", 0).edit().remove("zk_phase").remove("zk_name").remove("zk_done").remove("zk_total").remove("zk_ts").apply();
     }
 
     static String mb(long b) { return (b >> 20) + " MB"; }
@@ -314,7 +314,7 @@ public class Shell {
         if (todo.isEmpty()) return false;
         if (applyActive.get() > 0) return true;       // a hide/restore is running: wait, then run again
         byte[] b = bundle(c);
-        if (b == null) { save(c, "lock", "NOT LOCKED: no lock key yet. Open PrivacyGuard and unlock once."); return false; }
+        if (b == null) { save(c, "lock", "NOT LOCKED: no lock key yet. Open Zorken and unlock once."); return false; }
         StringBuilder log = new StringBuilder();
         boolean yielded = false;
         try {
@@ -351,7 +351,7 @@ public class Shell {
                         List<File> have = containers(r[3]);
                         int n = 0;
                         if (!have.isEmpty()) { String nm = have.get(have.size() - 1).getName(); n = Integer.parseInt(nm.substring(new File(r[3]).getName().length() + 1, nm.length() - 4)) + 1; }
-                        File out = new File(r[3] + "." + n + ".pge"), tmp = new File(out.getPath() + ".tmp");
+                        File out = new File(r[3] + "." + n + ".zk"), tmp = new File(out.getPath() + ".tmp");
                         try {
                             long free = vault.getUsableSpace();
                             if (free < bytes + (64L << 20))
@@ -403,7 +403,7 @@ public class Shell {
     }
 
     private static String apply0(Set<String> paths, boolean hide, Context c, String pin) {
-        if (!hasAccess()) return "No storage access. Grant 'All files access' to PrivacyGuard.";
+        if (!hasAccess()) return "No storage access. Grant 'All files access' to Zorken.";
         StringBuilder log = new StringBuilder("Android " + Build.VERSION.RELEASE + " / " + Build.MANUFACTURER + "\n");
         PrivateKey priv = null;
         String lockErr = null;
@@ -426,7 +426,7 @@ public class Shell {
                 if (hide) {
                     if (!real.exists()) { log.append(plain.exists() || !containers(r[3]).isEmpty() ? "already hidden: " : "not found: ").append(p).append('\n'); continue; }
                     File vault = plain.getParentFile();
-                    if (!vault.isDirectory() && !vault.mkdirs()) { log.append("FAILED (cannot create .pg): ").append(p).append('\n'); continue; }
+                    if (!vault.isDirectory() && !vault.mkdirs()) { log.append("FAILED (cannot create .zorken): ").append(p).append('\n'); continue; }
                     boolean ok = !plain.exists() ? move(real, plain, log) : merge(real, plain);
                     log.append(ok ? "hidden: " : "FAILED: ").append(p).append('\n');
                 } else {
@@ -448,7 +448,7 @@ public class Shell {
                             try {
                                 long clash = Vault.extract(f, priv, parent, new BooleanSupplier() { public boolean getAsBoolean() { return false; } });
                                 if (clash == 0) f.delete();       // only drop the container once everything in it is back
-                                else { ok = false; log.append("  kept ").append(f.getName()).append(" in .pg: ").append(clash).append(" file(s) clash with different files already in place\n"); }
+                                else { ok = false; log.append("  kept ").append(f.getName()).append(" in .zorken: ").append(clash).append(" file(s) clash with different files already in place\n"); }
                             }
                             catch (Exception e) { ok = false; log.append("  could not open ").append(f.getName()).append(": ").append(e).append('\n'); }
                         }
@@ -465,7 +465,7 @@ public class Shell {
 
     static String save(Context c, String tag, String out) {
         String log = tag + " @ " + new Date() + "\n" + out;
-        c.getSharedPreferences("pg", 0).edit().putString("log", log).apply();
+        c.getSharedPreferences("zk", 0).edit().putString("log", log).apply();
         return log;
     }
 

@@ -1,4 +1,4 @@
-package com.pg;
+package com.zorken;
 
 import android.app.job.JobInfo;
 import android.app.job.JobParameters;
@@ -9,7 +9,7 @@ import android.content.Context;
 import java.util.function.BooleanSupplier;
 
 /**
- * Locks hidden items (encrypts them into the .pg vault) in the background. Safe to schedule any time; it resumes from the files on disk.
+ * Locks hidden items (encrypts them into the .zorken vault) in the background. Safe to schedule any time; it resumes from the files on disk.
  * schedule() prefers the foreground LockService; this job is only the fallback when Android refuses to start that service.
  */
 public class EncryptJob extends JobService {

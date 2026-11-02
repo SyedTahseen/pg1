@@ -1,4 +1,4 @@
-package com.pg;
+package com.zorken;
 
 import android.app.Notification;
 import android.app.NotificationChannel;
@@ -20,9 +20,9 @@ import java.util.function.BooleanSupplier;
  * a foreground service with a notification and a wake lock is allowed to run until the work is done.
  */
 public class LockService extends Service {
-    static final String CH = "pg_lock";
+    static final String CH = "zk_lock";
     static final int NID = 7002;
-    static final String ACT_RESTORE = "com.pg.RESTORE";
+    static final String ACT_RESTORE = "com.zorken.RESTORE";
     static final AtomicBoolean RUNNING = new AtomicBoolean(false);     // locking
     static final AtomicBoolean RESTORING = new AtomicBoolean(false);
     static volatile String pendingPin;        // handed over in memory only (never written to disk)
@@ -51,7 +51,7 @@ public class LockService extends Service {
     private Notification note(String text, int pct) {
         NotificationManager nm = (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
         if (nm != null) nm.createNotificationChannel(new NotificationChannel(CH, "Locking files", NotificationManager.IMPORTANCE_LOW));
-        Notification.Builder nb = new Notification.Builder(this, CH).setContentTitle("PrivacyGuard").setContentText(text)
+        Notification.Builder nb = new Notification.Builder(this, CH).setContentTitle("Zorken").setContentText(text)
             .setSmallIcon(android.R.drawable.stat_sys_download).setOngoing(true);
         if (pct >= 0) nb.setProgress(100, pct, false);
         return nb.build();
@@ -74,7 +74,7 @@ public class LockService extends Service {
     private void begin() {
         if (active.getAndIncrement() == 0) {
             PowerManager pm = (PowerManager) getSystemService(Context.POWER_SERVICE);
-            if (pm != null) { wl = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "pg:lock"); wl.acquire(6 * 60 * 60 * 1000L); }
+            if (pm != null) { wl = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "zk:lock"); wl.acquire(6 * 60 * 60 * 1000L); }
             startTicker();
         }
     }
@@ -85,13 +85,13 @@ public class LockService extends Service {
         ticker = new Thread(new Runnable() { public void run() {
             try {
                 while (active.get() > 0) {
-                    SharedPreferences sp = c.getSharedPreferences("pg", 0);
-                    String ph = sp.getString("pg_phase", null);
-                    long t = sp.getLong("pg_total", 0), d = sp.getLong("pg_done", 0);
+                    SharedPreferences sp = c.getSharedPreferences("zk", 0);
+                    String ph = sp.getString("zk_phase", null);
+                    long t = sp.getLong("zk_total", 0), d = sp.getLong("zk_done", 0);
                     if (ph != null && t > 0 && nm != null) {
                         int pct = (int) Math.min(100, d * 100 / t);
                         String what = "restore".equals(ph) ? "Restoring " : "hide".equals(ph) ? "Hiding " : "Locking ";
-                        nm.notify(NID, note(what + sp.getString("pg_name", "") + " - " + pct + "%", pct));
+                        nm.notify(NID, note(what + sp.getString("zk_name", "") + " - " + pct + "%", pct));
                     }
                     Thread.sleep(1000);
                 }
@@ -116,7 +116,7 @@ public class LockService extends Service {
                 try {
                     String res = Shell.restoreSync(c, pin);
                     // the app shows "Visible" afterwards; problems are reported through the log + a message
-                    c.getSharedPreferences("pg", 0).edit().putBoolean("hidden", false).putBoolean("restore_fail", Shell.hasProblems(res)).commit();
+                    c.getSharedPreferences("zk", 0).edit().putBoolean("hidden", false).putBoolean("restore_fail", Shell.hasProblems(res)).commit();
                 } catch (Throwable ignored) {
                 } finally { RESTORING.set(false); done(); }
             } }).start();

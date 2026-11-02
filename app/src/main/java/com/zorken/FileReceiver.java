@@ -1,4 +1,4 @@
-package com.pg;
+package com.zorken;
 
 import android.content.*;
 import java.util.*;
@@ -6,17 +6,17 @@ import java.util.*;
 public class FileReceiver extends BroadcastReceiver {
     @Override
     public void onReceive(final Context c, Intent i) {
-        final SharedPreferences sp = c.getSharedPreferences("pg", 0);
+        final SharedPreferences sp = c.getSharedPreferences("zk", 0);
         String a = i.getAction();
-        if ("com.pg.PONG".equals(a)) {
+        if ("com.zorken.PONG".equals(a)) {
             sp.edit().putLong("pong", System.currentTimeMillis())
                 .putInt("modver", i.getIntExtra("ver", 0))          // 0 = old module that doesn't report a version
                 .putBoolean("modhas", i.getBooleanExtra("has", false)).apply();
             return;
         }
         if (Intent.ACTION_BOOT_COMPLETED.equals(a)) { EncryptJob.schedule(c); return; }   // finish locking after a reboot
-        if ("com.pg.ACK".equals(a)) { ack(sp, i); return; }
-        if (!"com.pg.HIDE_FILES".equals(a)) return;
+        if ("com.zorken.ACK".equals(a)) { ack(sp, i); return; }
+        if (!"com.zorken.HIDE_FILES".equals(a)) return;
 
         SharedPreferences.Editor ed = sp.edit().putBoolean("hidden", true);
         // Fresh install that was never set up: use the folder list the module remembers, so files still get hidden.

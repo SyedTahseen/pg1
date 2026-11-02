@@ -1,4 +1,4 @@
-package com.pg;
+package com.zorken;
 
 import java.io.*;
 import java.nio.charset.StandardCharsets;
@@ -10,7 +10,7 @@ import javax.crypto.*;
 import javax.crypto.spec.*;
 
 /**
- * Encryption for the .pg vault. Plain Java only (no Android classes) so it can be tested anywhere.
+ * Encryption for the .zorken vault. Plain Java only (no Android classes) so it can be tested anywhere.
  *
  * Locking needs NO PIN, unlocking does:
  *  - A key bundle holds an EC (P-256) public key in the clear and the matching private key encrypted with
@@ -23,8 +23,8 @@ import javax.crypto.spec.*;
 public final class Vault {
     static final int CHUNK = 1 << 20;
     static final int ITER = 300000;
-    static final byte[] KMAGIC = {'P', 'G', 'K', '1'};
-    static final byte[] FMAGIC = {'P', 'G', 'E', '1'};
+    static final byte[] KMAGIC = {'Z', 'K', 'K', '1'};
+    static final byte[] FMAGIC = {'Z', 'K', 'E', '1'};
     static final SecureRandom RND = new SecureRandom();
 
     /** Thrown when the caller's stop flag asked the work to pause. */
@@ -154,7 +154,7 @@ public final class Vault {
         KeyAgreement ka = KeyAgreement.getInstance("ECDH");
         ka.init(mine);
         ka.doPhase(theirs, true);
-        return hmac(ka.generateSecret(), "PGE1-key".getBytes(StandardCharsets.UTF_8), ephPubEnc);
+        return hmac(ka.generateSecret(), "ZKE1-key".getBytes(StandardCharsets.UTF_8), ephPubEnc);
     }
 
     // ------------------------------------------------------------------ chunk streams
@@ -304,7 +304,7 @@ public final class Vault {
             DataInputStream h = new DataInputStream(raw);
             byte[] m = new byte[4];
             h.readFully(m);
-            if (!Arrays.equals(m, FMAGIC)) throw new IOException("not a PrivacyGuard container");
+            if (!Arrays.equals(m, FMAGIC)) throw new IOException("not a Zorken container");
             byte[] eph = new byte[h.readUnsignedShort()];
             h.readFully(eph);
             byte[] key = knownKey != null ? knownKey
@@ -330,7 +330,7 @@ public final class Vault {
                     if (f != null && !f.exists()) {
                         File par = f.getParentFile();
                         if (!par.isDirectory() && !par.mkdirs()) throw new IOException("cannot create " + par);
-                        tmp = new File(f.getPath() + ".pgtmp");
+                        tmp = new File(f.getPath() + ".zktmp");
                         o = new FileOutputStream(tmp);
                     }
                     try {

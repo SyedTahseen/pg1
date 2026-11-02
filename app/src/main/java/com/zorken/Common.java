@@ -1,4 +1,4 @@
-package com.pg;
+package com.zorken;
 import java.security.MessageDigest;
 public class Common {
     /** Module protocol version. Bump when the app <-> hook commands change; the app warns if the running hook is older (needs a reboot). */
@@ -29,13 +29,13 @@ public class Common {
 
     public static String sha(String s) {
         try {
-            return hex(MessageDigest.getInstance("SHA-256").digest(("pg:" + s).getBytes("UTF-8")));
+            return hex(MessageDigest.getInstance("SHA-256").digest(("zk:" + s).getBytes("UTF-8")));
         } catch (Exception e) { return ""; }
     }
 
     /** Core packages that must never be hidden (hiding them can black-screen or bootloop the phone). */
     public static boolean isCoreName(String p) {
-        return p.equals("com.pg") || p.equals("android") || p.equals("com.android.systemui")
+        return p.equals("com.zorken") || p.equals("android") || p.equals("com.android.systemui")
             || p.equals("com.android.settings") || p.equals("com.android.phone")
             || p.equals("com.android.server.telecom") || p.startsWith("com.android.providers.")
             || p.equals("com.google.android.gms") || p.equals("com.google.android.gsf")

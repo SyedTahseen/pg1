@@ -1,12 +1,12 @@
 plugins { id 'com.android.application' }
 android {
-    namespace 'com.pg'
+    namespace 'com.zorken'
     compileSdk 34
-    defaultConfig { applicationId 'com.pg'; minSdk 30; targetSdk 34; versionCode 13; versionName '0.4.0' }
+    defaultConfig { applicationId 'com.zorken'; minSdk 30; targetSdk 34; versionCode 13; versionName '0.4.0' }
     signingConfigs {
         stable {
             if (file('stable.keystore').exists()) {
-                storeFile file('stable.keystore'); storePassword 'android'; keyAlias 'pg'; keyPassword 'android'
+                storeFile file('stable.keystore'); storePassword 'android'; keyAlias 'zk'; keyPassword 'android'
             }
         }
     }

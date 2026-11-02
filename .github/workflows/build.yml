@@ -34,24 +34,24 @@ jobs:
         uses: actions/cache@v4
         with:
           path: app/stable.keystore
-          key: pg-signing-key-v1
+          key: zk-signing-key-v1
 
       - name: Create signing key (first run only)
         if: steps.key.outputs.cache-hit != 'true'
         run: |
           keytool -genkeypair -keystore app/stable.keystore -storepass android -keypass android \
-            -alias pg -keyalg RSA -keysize 2048 -validity 36500 -dname "CN=PrivacyGuard"
+            -alias zk -keyalg RSA -keysize 2048 -validity 36500 -dname "CN=Zorken"
 
       - name: Build debug APK
         run: gradle assembleDebug --console=plain
 
       - name: Rename APK
-        run: cp app/build/outputs/apk/debug/app-debug.apk PrivacyGuard.apk
+        run: cp app/build/outputs/apk/debug/app-debug.apk Zorken.apk
 
       - uses: actions/upload-artifact@v4
         with:
-          name: PrivacyGuard-apk
-          path: PrivacyGuard.apk
+          name: Zorken-apk
+          path: Zorken.apk
 
       # On main/master: also publish a "latest" release so you can download the APK straight on your phone.
       - name: Move "latest" tag
@@ -69,5 +69,5 @@ jobs:
           tag_name: latest
           name: Latest build
           prerelease: true
-          files: PrivacyGuard.apk
+          files: Zorken.apk
           body: Automatic build of commit ${{ github.sha }}
