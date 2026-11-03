@@ -40,6 +40,8 @@ public class MainActivity extends Activity {
     @Override protected void onCreate(Bundle b) {
         super.onCreate(b);
         sp = getSharedPreferences("zk", 0);
+        rootState = Environment.isExternalStorageManager() ? "ok" : "bad";
+        modState = sp.getString("st_mod", "checking");        // last known answer: no grey "Checking..." flash on every open
         initFonts();
         getWindow().setBackgroundDrawable(new ColorDrawable(BG));
         getWindow().setDecorFitsSystemWindows(false);          // edge to edge: the glow runs under the status bar
@@ -1366,14 +1368,16 @@ public class MainActivity extends Activity {
     }
 
     // ---------- status checks ----------
+    /** Re-checks silently: the card keeps showing the last known state and the screen is only rebuilt if something changed. */
     void checkStatus() {
-        modState = "checking";
+        final String r0 = rootState, m0 = modState;
         rootState = Environment.isExternalStorageManager() ? "ok" : "bad";   // storage access (no root needed)
         new Thread(() -> {
             boolean ok = pingModule();
             modState = ok ? (sp.getInt("modver", 0) >= Common.MODULE_VER ? "ok" : "old") : "bad";
+            sp.edit().putString("st_mod", modState).apply();
             AppLog.add(this, "status", "module: " + modState + ", storage access: " + rootState);
-            runOnUiThread(this::refresh);
+            runOnUiThread(() -> { if (!rootState.equals(r0) || !modState.equals(m0)) refresh(); });
         }).start();
     }
 
@@ -1384,7 +1388,7 @@ public class MainActivity extends Activity {
     @Override protected void onResume() {
         super.onResume();
         ticker.removeCallbacks(tick); ticker.postDelayed(tick, 500);
-        rootState = "checking"; modState = "checking"; checked = false;
+        checked = false;
         if (pin != null) main();
         if (android.os.Build.VERSION.SDK_INT >= 33 && checkSelfPermission("android.permission.POST_NOTIFICATIONS") != android.content.pm.PackageManager.PERMISSION_GRANTED)
             requestPermissions(new String[]{"android.permission.POST_NOTIFICATIONS"}, 77);   // shows locking progress
