@@ -723,14 +723,19 @@ public class MainActivity extends Activity {
         ticker.postDelayed(this, 500);
     } };
 
-    /** True while a run reported progress within the last 20 s (a killed process can't leave a stuck bar). */
+    long lastBusy;
+    /** True while a hide, lock or restore is really running (not a timestamp that goes stale or is cleared between phases).
+     * Stays true 2 s after the last activity, so the card doesn't blink off and on in the hand-over from hiding to locking. */
     boolean progActive() {
-        return sp.getString("zk_phase", null) != null && System.currentTimeMillis() - sp.getLong("zk_ts", 0) < 20000;
+        long now = System.currentTimeMillis();
+        if (Shell.applyActive.get() > 0 || LockService.RUNNING.get() || LockService.RESTORING.get()) { lastBusy = now; return true; }
+        return now - lastBusy < 2000;
     }
 
     void progUpdate() {
         if (progBar == null || progTxt == null) return;
         String ph = sp.getString("zk_phase", ""), nm = sp.getString("zk_name", "");
+        if (ph.isEmpty()) { progBar.setProgress(0); progTxt.setText("Preparing…"); return; }   // between phases
         long d = sp.getLong("zk_done", 0), t = Math.max(1, sp.getLong("zk_total", 1));
         boolean items = "hide".equals(ph);
         int pct = (int) Math.min(100, d * 100 / t);
@@ -782,7 +787,9 @@ public class MainActivity extends Activity {
         final TextView label = text(hint, 16, fg, SEMI);
         label.setGravity(Gravity.CENTER);
         label.setSingleLine(true);
-        label.setPadding(knobW + pad * 2, 0, pad * 2, 0);                  // centred in the free space right of the knob
+        int gap = knobW + pad * 2 + dp(10);                                // knob + 10 dp of air, on both sides so the text stays centred
+        label.setPadding(gap, 0, gap, 0);
+        label.setAutoSizeTextTypeUniformWithConfiguration(12, 16, 1, android.util.TypedValue.COMPLEX_UNIT_SP);   // shrinks a little on narrow phones instead of touching the knob
         track.addView(label, new FrameLayout.LayoutParams(MATCH, MATCH));
 
         final ImageView knob = new ImageView(this);
@@ -844,6 +851,7 @@ public class MainActivity extends Activity {
 
     /** What the slider does once it reaches the end. */
     void runHeroAction(boolean hid) {
+        lastBusy = System.currentTimeMillis();            // show the progress card right away
         if (hid) {
             send("restore");
             // The service keeps going when the app is left; "hidden" is cleared by it when the restore is done.
