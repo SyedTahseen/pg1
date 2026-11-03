@@ -811,8 +811,7 @@ public class MainActivity extends Activity {
 
     LinearLayout panel() {
         LinearLayout p = vcol();
-        p.setBackground(rect(CARD, 20));
-        p.setPadding(dp(14), dp(14), dp(14), dp(14));
+        p.setPadding(dp(52), dp(2), dp(4), dp(6));   // no card: lines up under the row title, like the rest of the list
         return p;
     }
 
@@ -905,7 +904,7 @@ public class MainActivity extends Activity {
             }
             p.addView(f, new LinearLayout.LayoutParams(MATCH, WRAP));
         }
-        p.addView(pill("Choose apps", CARD2, TXT, v -> pickApps()), lp(MATCH, dp(46), 14));
+        p.addView(outlineBtn("Choose apps", v -> pickApps()), lp(MATCH, dp(42), 14));
         return p;
     }
 
@@ -942,8 +941,8 @@ public class MainActivity extends Activity {
         }
         p.addView(err, lp(MATCH, WRAP, 6));
         LinearLayout btns = hrow();
-        Button f1 = pill("Add folder", CARD2, TXT, v -> startActivityForResult(new Intent(Intent.ACTION_OPEN_DOCUMENT_TREE), 1));
-        Button f2 = pill("Add file", CARD2, TXT, v -> startActivityForResult(
+        Button f1 = outlineBtn("Add folder", v -> startActivityForResult(new Intent(Intent.ACTION_OPEN_DOCUMENT_TREE), 1));
+        Button f2 = outlineBtn("Add file", v -> startActivityForResult(
             new Intent(Intent.ACTION_OPEN_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE).setType("*/*"), 2));
         LinearLayout.LayoutParams l1 = new LinearLayout.LayoutParams(0, MATCH, 1f);
         l1.rightMargin = dp(6);
@@ -951,7 +950,7 @@ public class MainActivity extends Activity {
         l2.leftMargin = dp(6);
         btns.addView(f1, l1);
         btns.addView(f2, l2);
-        p.addView(btns, lp(MATCH, dp(46), 10));
+        p.addView(btns, lp(MATCH, dp(42), 10));
         return p;
     }
 
@@ -961,13 +960,15 @@ public class MainActivity extends Activity {
         final String log = sp.getString("log", "Nothing yet. Tap Hide now first.");
         TextView lt = text(log, 12, SUB, false);
         lt.setTextIsSelectable(true);
+        lt.setPadding(dp(14), dp(12), dp(14), dp(12));
         ScrollView box = scroller(lt);
+        box.setBackground(outline(0xFF111113, 0xFF3A3A3C, 16));
         box.setOnTouchListener((v, e) -> { v.getParent().requestDisallowInterceptTouchEvent(true); return false; });
         p.addView(box);
-        p.addView(pill("Copy", CARD2, TXT, v -> {
+        p.addView(outlineBtn("Copy", v -> {
             ((ClipboardManager) getSystemService(Context.CLIPBOARD_SERVICE)).setPrimaryClip(ClipData.newPlainText("Zorken log", log));
             toast("Log copied");
-        }), lp(MATCH, dp(46), 12));
+        }), lp(MATCH, dp(42), 12));
         return p;
     }
 
