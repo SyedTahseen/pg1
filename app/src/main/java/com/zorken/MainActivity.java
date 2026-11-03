@@ -622,17 +622,36 @@ public class MainActivity extends Activity {
         root.addView(t);
     }
 
+    static final String REPO = "https://github.com/syedtahseen/zorken", CONTACT_MAIL = "itxtahseen@gmail.com";
+
+    /** Three-dot menu in the app's own style (dark rounded card instead of Android's default popup). */
     void menu(View anchor) {
-        PopupMenu m = new PopupMenu(this, anchor);
-        m.getMenu().add(0, 1, 0, "Re-check status");
-        m.getMenu().add(0, 2, 1, "Change PIN");
-        m.setOnMenuItemClickListener(it -> {
-            click();
-            if (it.getItemId() == 1) { rootState = "checking"; modState = "checking"; checked = false; main(); }
-            else changePin();
-            return true;
-        });
-        m.show();
+        final int w = dp(210);
+        LinearLayout c = vcol();
+        c.setBackground(outline(CARD, 0xFF2C2C2E, 16));
+        c.setPadding(dp(6), dp(6), dp(6), dp(6));
+        final PopupWindow pw = new PopupWindow(c, w, WRAP, true);
+        pw.setBackgroundDrawable(new ColorDrawable(Color.TRANSPARENT));
+        pw.setElevation(dp(12));
+        menuItem(c, pw, "Re-check status", () -> { rootState = "checking"; modState = "checking"; checked = false; main(); });
+        menuItem(c, pw, "Bug report", () -> openLink(new Intent(Intent.ACTION_VIEW, Uri.parse(REPO + "/issues/new?title=" + Uri.encode("Bug: ")
+            + "&body=" + Uri.encode("Android " + android.os.Build.VERSION.RELEASE + " / " + android.os.Build.MANUFACTURER + " " + android.os.Build.MODEL
+                + "\n\nWhat happened:\n"))), "No app found to open the link"));
+        menuItem(c, pw, "Contact", () -> openLink(new Intent(Intent.ACTION_SENDTO, Uri.parse("mailto:" + CONTACT_MAIL))
+            .putExtra(Intent.EXTRA_SUBJECT, "Zorken"), "No email app found"));
+        pw.showAsDropDown(anchor, anchor.getWidth() - w, 0);
+    }
+
+    void menuItem(LinearLayout c, final PopupWindow pw, String label, final Runnable action) {
+        TextView t = text(label, 16, TXT, MED);
+        t.setPadding(dp(14), dp(13), dp(14), dp(13));
+        t.setBackground(ripple(Color.TRANSPARENT, 12, TXT));
+        t.setOnClickListener(v -> { click(); pw.dismiss(); action.run(); });
+        c.addView(t, new LinearLayout.LayoutParams(MATCH, WRAP));
+    }
+
+    void openLink(Intent i, String err) {
+        try { startActivity(i); } catch (Throwable t) { errorToast(err); }
     }
 
     void statusCard() {
