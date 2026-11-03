@@ -660,7 +660,8 @@ public class MainActivity extends Activity {
         boolean r = "ok".equals(rootState), m = "ok".equals(modState);
         boolean busy = "checking".equals(rootState) || "checking".equals(modState);
         boolean good = r && m;
-        if (!busy && !good) { attentionCard(r, m); return; }
+        if (busy) { checkingCard(); return; }
+        if (!good) { attentionCard(r, m); return; }
         int ac = busy ? SUB : good ? GREEN : RED;
         LinearLayout c = vcol();
         c.setBackground(busy ? grad(0xFF232325, 0xFF161618, CARD2, 24)
@@ -713,7 +714,7 @@ public class MainActivity extends Activity {
     /** "Attention !": same card as the settings panels (dark fill, rounded outline) with a red border; issues are split by the app's usual separator. */
     void attentionCard(boolean storageOk, boolean moduleOk) {
         LinearLayout c = vcol();
-        c.setBackground(outline(0xFF111113, RED, 20));
+        c.setBackground(outline(0x1FFF6B6B, 0x4DFF6B6B, 20));     // light red tint, soft red border
         c.setPadding(dp(18), dp(16), dp(18), dp(16));
         root.addView(c, lp(MATCH, WRAP, 28));
         c.addView(text("Attention !", 26, TXT, true));
@@ -730,6 +731,15 @@ public class MainActivity extends Activity {
         }
         c.addView(pill("Re-check", 0xFF1E1E20, TXT, v -> { rootState = "checking"; modState = "checking"; checked = false; main(); }),
             lp(MATCH, dp(46), 14));
+    }
+
+    /** "Checking...": the same dark card as the settings panels, title only. */
+    void checkingCard() {
+        LinearLayout c = vcol();
+        c.setBackground(outline(0xFF111113, 0xFF3A3A3C, 20));
+        c.setPadding(dp(18), dp(16), dp(18), dp(16));
+        root.addView(c, lp(MATCH, WRAP, 28));
+        c.addView(text("Checking\u2026", 26, TXT, true));
     }
 
     void divider(LinearLayout c) {
