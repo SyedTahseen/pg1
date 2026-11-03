@@ -754,51 +754,79 @@ public class MainActivity extends Activity {
         progLabel.setText(ss);
     }
 
-    /** Glowing progress ring that runs clockwise around the slider's outline, starting at the top centre. */
+    /**
+     * Progress as liquid filling a glass pipe that runs clockwise around the slider's outline (start: top centre).
+     * Fill level eases toward the real progress like liquid catching up; a wave flows along the surface,
+     * light streaks and bubbles drift through it, and a glowing bulb sits at the leading edge.
+     */
     static class GlowRing extends View {
-        final Paint base = new Paint(Paint.ANTI_ALIAS_FLAG), glow = new Paint(Paint.ANTI_ALIAS_FLAG), line = new Paint(Paint.ANTI_ALIAS_FLAG);
-        final Path path = new Path(), seg = new Path();
-        final float inset;                    // distance of the ring's centre line from this view's edge
-        float shown = -1, target = -1, pulse = 1f;       // shown < 0: draw nothing (idle slider)
-        android.animation.ValueAnimator prog, beat;
+        final Paint rim = new Paint(Paint.ANTI_ALIAS_FLAG), core = new Paint(Paint.ANTI_ALIAS_FLAG), liquid = new Paint(Paint.ANTI_ALIAS_FLAG),
+            glow = new Paint(Paint.ANTI_ALIAS_FLAG), wave = new Paint(Paint.ANTI_ALIAS_FLAG), streak = new Paint(Paint.ANTI_ALIAS_FLAG),
+            dot = new Paint(Paint.ANTI_ALIAS_FLAG), bulbGlow = new Paint(Paint.ANTI_ALIAS_FLAG), bulb = new Paint(Paint.ANTI_ALIAS_FLAG);
+        final Path path = new Path(), seg = new Path(), part = new Path(), ripple = new Path();
+        final float inset, d;                 // inset: distance of the pipe's centre line from this view's edge; d: 1 dp in px
+        PathMeasure pm;
+        float len;
+        final float[] xy = new float[2], tan = new float[2];
+        float shown = -1, target = -1, time;  // shown < 0: draw nothing (idle slider)
+        long last;
+        android.animation.ValueAnimator loop;
+
         GlowRing(Context c, int color, float stroke, float blur, float inset) {
             super(c);
             this.inset = inset;
-            for (Paint pt : new Paint[]{base, glow, line}) { pt.setStyle(Paint.Style.STROKE); pt.setStrokeCap(Paint.Cap.ROUND); }
-            base.setStrokeWidth(stroke * 0.5f); base.setColor(0x2EFFFFFF);
-            line.setStrokeWidth(stroke); line.setColor(color);
-            glow.setStrokeWidth(stroke * 1.6f); glow.setColor(color);
+            d = stroke / 4f;
+            for (Paint pt : new Paint[]{rim, core, liquid, glow, wave, streak}) { pt.setStyle(Paint.Style.STROKE); pt.setStrokeCap(Paint.Cap.ROUND); pt.setStrokeJoin(Paint.Join.ROUND); }
+            rim.setStrokeWidth(6.5f * d);  rim.setColor(0x40FFFFFF);          // glass wall
+            core.setStrokeWidth(4.5f * d); core.setColor(0xFF0E0E10);         // empty pipe inside
+            liquid.setStrokeWidth(4.5f * d); liquid.setColor(color);
+            glow.setStrokeWidth(7f * d); glow.setColor(color);
             glow.setMaskFilter(new BlurMaskFilter(blur, BlurMaskFilter.Blur.NORMAL));
+            wave.setStrokeWidth(1.4f * d); wave.setColor(0xFFF6FFB4);
+            streak.setStrokeWidth(2.2f * d); streak.setColor(Color.WHITE);
+            dot.setColor(Color.WHITE);
+            bulb.setColor(0xFFF8FFC4);
+            bulbGlow.setColor(color);
+            bulbGlow.setMaskFilter(new BlurMaskFilter(blur, BlurMaskFilter.Blur.NORMAL));
         }
+
         float value() { return target; }
+
         void setProgress(float f) {
-            if (f < 0) { target = shown = -1; invalidate(); return; }
-            if (Math.abs(f - target) < 0.0005f && shown >= 0) return;
+            if (f < 0) { target = shown = -1; stopLoop(); invalidate(); return; }
+            if (shown < 0) shown = f;                                  // first value: no refill from empty
+            else if (f < shown - 0.25f) shown = f;                     // a new phase starts again from empty: don't drain
             target = f;
-            if (shown < 0) shown = 0;
-            if (prog != null) prog.cancel();
-            prog = android.animation.ValueAnimator.ofFloat(shown, f);
-            prog.setDuration(450);
-            prog.addUpdateListener(a -> { shown = (float) a.getAnimatedValue(); invalidate(); });
-            prog.start();
+            startLoop();
         }
-        @Override protected void onAttachedToWindow() {
-            super.onAttachedToWindow();
-            beat = android.animation.ValueAnimator.ofFloat(0.55f, 1f);           // slow breathing glow
-            beat.setDuration(900);
-            beat.setRepeatMode(android.animation.ValueAnimator.REVERSE);
-            beat.setRepeatCount(android.animation.ValueAnimator.INFINITE);
-            beat.addUpdateListener(a -> { pulse = (float) a.getAnimatedValue(); if (shown > 0) invalidate(); });
-            beat.start();
+
+        void startLoop() {
+            if (loop != null || !isAttachedToWindow()) return;
+            last = android.os.SystemClock.uptimeMillis();
+            loop = android.animation.ValueAnimator.ofFloat(0f, 1f);
+            loop.setDuration(1000);
+            loop.setRepeatCount(android.animation.ValueAnimator.INFINITE);
+            loop.setInterpolator(null);
+            loop.addUpdateListener(a -> {
+                long now = android.os.SystemClock.uptimeMillis();
+                float dt = Math.min(0.1f, (now - last) / 1000f);
+                last = now;
+                time += dt;
+                if (shown >= 0) {                                      // liquid level eases toward the real progress (~0.4 s time constant)
+                    shown += (target - shown) * (1f - (float) Math.exp(-dt / 0.4f));
+                    if (Math.abs(target - shown) < 0.0004f) shown = target;
+                }
+                invalidate();
+            });
+            loop.start();
         }
-        @Override protected void onDetachedFromWindow() {
-            if (beat != null) beat.cancel();
-            if (prog != null) prog.cancel();
-            super.onDetachedFromWindow();
-        }
-        @Override protected void onDraw(Canvas cv) {
-            if (shown < 0) return;
-            float L = inset, T = inset, R = getWidth() - inset, B = getHeight() - inset, r = (B - T) / 2f;
+        void stopLoop() { if (loop != null) { loop.cancel(); loop = null; } }
+
+        @Override protected void onAttachedToWindow() { super.onAttachedToWindow(); if (shown >= 0) startLoop(); }
+        @Override protected void onDetachedFromWindow() { stopLoop(); super.onDetachedFromWindow(); }
+
+        @Override protected void onSizeChanged(int w, int h, int ow, int oh) {
+            float L = inset, T = inset, R = w - inset, B = h - inset, r = (B - T) / 2f;
             path.reset();
             path.moveTo((L + R) / 2f, T);
             path.lineTo(R - r, T);
@@ -806,14 +834,62 @@ public class MainActivity extends Activity {
             path.lineTo(L + r, B);
             path.arcTo(new RectF(L, T, L + 2 * r, B), 90, 180);
             path.close();
-            cv.drawPath(path, base);
-            if (shown <= 0.001f) return;
-            PathMeasure pm = new PathMeasure(path, false);
-            seg.reset();
-            pm.getSegment(0, pm.getLength() * Math.min(1f, shown), seg, true);
-            glow.setAlpha((int) (255 * 0.85f * pulse));
-            cv.drawPath(seg, glow);
-            cv.drawPath(seg, line);
+            pm = new PathMeasure(path, false);
+            len = pm.getLength();
+        }
+
+        @Override protected void onDraw(Canvas cv) {
+            if (shown < 0 || pm == null) return;
+            cv.drawPath(path, rim);                                    // the empty glass pipe
+            cv.drawPath(path, core);
+            float fl = len * Math.min(1f, shown);                      // length of liquid
+            if (fl < 1f) return;
+
+            seg.reset(); pm.getSegment(0, fl, seg, true);
+            float pulse = 0.7f + 0.3f * (float) Math.sin(time * 2f * Math.PI / 1.1f);
+            glow.setAlpha((int) (255 * 0.55f * pulse));
+            cv.drawPath(seg, glow);                                    // soft light spilling out of the pipe
+            cv.drawPath(seg, liquid);                                  // the liquid
+
+            // wave flowing along the surface (the thin bright line wobbling across the pipe)
+            float wl = 22 * d, amp = 1.1f * d, fade = 8 * d;
+            ripple.reset();
+            for (float s = 0; ; s += 3 * d) {
+                boolean end = s >= fl;
+                if (end) s = fl;
+                pm.getPosTan(s, xy, tan);
+                float env = Math.min(1f, Math.min(s, fl - s) / fade);
+                float off = amp * env * (float) Math.sin(2 * Math.PI * (s / wl - time * 0.9f));
+                float x = xy[0] - tan[1] * off, y = xy[1] + tan[0] * off;
+                if (s == 0) ripple.moveTo(x, y); else ripple.lineTo(x, y);
+                if (end) break;
+            }
+            wave.setAlpha(190);
+            cv.drawPath(ripple, wave);
+
+            // light streak that keeps sliding from the start toward the leading edge
+            float band = 14 * d, pos = ((time / 1.5f) % 1f) * (fl + band), a0 = Math.max(0, pos - band), a1 = Math.min(fl, pos);
+            if (a1 - a0 > 1f) {
+                part.reset(); pm.getSegment(a0, a1, part, true);
+                streak.setAlpha(110);
+                cv.drawPath(part, streak);
+            }
+
+            // bubbles drifting along with the flow
+            for (int i = 0; i < 4; i++) {
+                float s = ((time * (0.07f + 0.035f * i) + i * 0.29f) % 1f) * fl;
+                pm.getPosTan(s, xy, tan);
+                float off = 1.1f * d * (float) Math.sin(time * 2.2f + i * 1.9f);
+                dot.setAlpha(150 + 20 * (i % 3));
+                cv.drawCircle(xy[0] - tan[1] * off, xy[1] + tan[0] * off, (0.7f + 0.25f * (i % 3)) * d, dot);
+            }
+
+            // glowing bulb at the leading edge
+            pm.getPosTan(fl, xy, tan);
+            float br = 3.2f * d * (1f + 0.12f * (float) Math.sin(time * 2f * Math.PI / 0.9f));
+            bulbGlow.setAlpha((int) (255 * 0.8f * pulse));
+            cv.drawCircle(xy[0], xy[1], br * 1.7f, bulbGlow);
+            cv.drawCircle(xy[0], xy[1], br, bulb);
         }
     }
 
@@ -824,7 +900,7 @@ public class MainActivity extends Activity {
         progShown = busy; ring = null; progLabel = null;
         final int knobH = dp(48), knobW = dp(84), pad = dp(4), m = dp(10);   // long pill knob inside the pill track; m = room for the glow
         final FrameLayout wrap = new FrameLayout(this);
-        final GlowRing gr = new GlowRing(this, GREEN, dp(4), dp(6), dp(6));
+        final GlowRing gr = new GlowRing(this, GREEN, dp(4), dp(6), dp(6) + dp(1) / 2f);
         wrap.addView(gr, new FrameLayout.LayoutParams(MATCH, MATCH));
         final FrameLayout track = new FrameLayout(this);
         track.setBackground(rect(bg, 28));
