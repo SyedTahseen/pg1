@@ -1460,7 +1460,7 @@ public class MainActivity extends Activity {
         if (res != RESULT_OK || data == null || data.getData() == null) return;
         String path = toPath(data.getData(), req == 1);
         if (path == null) { errorToast("Can't use that location (pick from internal storage / SD card)"); return; }
-        if (Shell.resolve(path) == null) { errorToast("That folder is protected (Android, DCIM, Download...). Pick a subfolder."); return; }
+        if (Shell.resolve(path) == null) { errorToast("Can't hide the Android folder, the storage root or Zorken's own vault"); return; }
         Set<String> s = set("paths"); s.add(path);
         sp.edit().putStringSet("paths", s).apply();
         AppLog.add(this, "settings", "folder/file added: " + path);
@@ -1512,16 +1512,23 @@ public class MainActivity extends Activity {
         final boolean[] on = new boolean[apps.size()];
         for (int i = 0; i < names.length; i++) { names[i] = apps.get(i)[0]; on[i] = sel.contains(apps.get(i)[1]); }
         LinearLayout list = vcol();
+        final View[] rows = new View[apps.size()];
         for (int i = 0; i < apps.size(); i++) {
             final int idx = i;
             LinearLayout r = hrow();
+            rows[i] = r;
             r.setPadding(0, dp(8), 0, dp(8));
             ImageView iv = new ImageView(this);
             iv.setImageDrawable(icon(apps.get(i)[1]));
             LinearLayout.LayoutParams ip = new LinearLayout.LayoutParams(dp(36), dp(36));
             ip.rightMargin = dp(14);
             r.addView(iv, ip);
-            r.addView(text(apps.get(i)[0], 15, TXT, false), new LinearLayout.LayoutParams(0, WRAP, 1f));
+            LinearLayout names2 = vcol();
+            names2.addView(text(apps.get(i)[0], 15, TXT, false));
+            TextView pk = text(apps.get(i)[1], 11, SUB, false);
+            pk.setPadding(0, dp(1), 0, 0);
+            names2.addView(pk);
+            r.addView(names2, new LinearLayout.LayoutParams(0, WRAP, 1f));
             final CheckBox cb = new CheckBox(this);
             cb.setChecked(on[i]);
             cb.setButtonTintList(android.content.res.ColorStateList.valueOf(GREEN));
@@ -1530,7 +1537,27 @@ public class MainActivity extends Activity {
             r.setOnClickListener(v -> { click(); cb.toggle(); });
             list.addView(r);
         }
-        sheet("Apps to hide", null, scroller(list), "OK", (d, ok) -> {
+        final EditText search = new EditText(this);
+        search.setHint("Search apps");
+        search.setHintTextColor(SUB); search.setTextColor(TXT); search.setTextSize(15); search.setTypeface(MED);
+        search.setSingleLine(true);
+        search.setBackground(outline(0xFF111113, 0xFF3A3A3C, 22));
+        search.setPadding(dp(16), 0, dp(16), 0);
+        search.addTextChangedListener(new android.text.TextWatcher() {
+            public void beforeTextChanged(CharSequence c, int a, int b, int n) {}
+            public void onTextChanged(CharSequence c, int a, int b, int n) {}
+            public void afterTextChanged(android.text.Editable e) {
+                String q = e.toString().trim().toLowerCase(Locale.ROOT);
+                for (int i = 0; i < rows.length; i++)
+                    rows[i].setVisibility(q.isEmpty() || apps.get(i)[0].toLowerCase(Locale.ROOT).contains(q)
+                        || apps.get(i)[1].toLowerCase(Locale.ROOT).contains(q) ? View.VISIBLE : View.GONE);
+            }
+        });
+        LinearLayout body = vcol();
+        body.setFocusableInTouchMode(true); body.requestFocus();      // keyboard only opens when the search field is tapped
+        body.addView(search, new LinearLayout.LayoutParams(MATCH, dp(46)));
+        body.addView(scroller(list), lp(MATCH, WRAP, 10));
+        sheet("Apps to hide", null, body, "OK", (d, ok) -> {
             Set<String> s2 = set("apps");            // keeps already-hidden apps that aren't listed right now
             for (String[] a2 : apps) s2.remove(a2[1]);
             for (int i = 0; i < on.length; i++) if (on[i]) s2.add(apps.get(i)[1]);

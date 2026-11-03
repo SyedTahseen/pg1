@@ -45,12 +45,10 @@ public class Shell {
         }
         if (base == null || rel.isEmpty() || rel.contains("..") || rel.contains("'") || rel.contains("\n")) return null;
         while (rel.endsWith("/")) rel = rel.substring(0, rel.length() - 1);
-        // Never touch folders other apps/Android depend on: hiding them can make apps hang or crash.
+        // Only Android's own data folder and our vault are off limits (apps and the system depend on them).
         String low = rel.toLowerCase(Locale.ROOT);
         if (low.equals(VAULT) || low.startsWith(VAULT + "/")) return null;   // the vault itself is off limits
         if (low.equals("android") || low.startsWith("android/")) return null;
-        if (!low.contains("/") && Arrays.asList("dcim", "download", "downloads", "pictures", "movies", "music",
-                "documents", "alarms", "notifications", "podcasts", "ringtones", "audiobooks", "recordings").contains(low)) return null;
         File real = new File(base + "/" + rel);
         if (real.getName().startsWith(PREFIX)) return null;
         String id = (rel.hashCode() & 0x7fffffff) + "_" + real.getName();
