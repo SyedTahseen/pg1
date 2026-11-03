@@ -104,7 +104,7 @@ public class LockService extends Service {
     @Override public int onStartCommand(Intent i, int flags, int startId) {
         final boolean restore = i != null && ACT_RESTORE.equals(i.getAction());
         try { enterForeground(restore ? "Restoring files…" : "Locking hidden files…"); }
-        catch (Throwable t) { AppLog.add(getApplicationContext(), restore ? "restore" : "lock", "could not start foreground service: " + t); if (active.get() == 0) stopSelf(); return START_NOT_STICKY; }
+        catch (Throwable t) { if (active.get() == 0) stopSelf(); return START_NOT_STICKY; }
         final Context c = getApplicationContext();
 
         if (restore) {
@@ -117,7 +117,7 @@ public class LockService extends Service {
                     String res = Shell.restoreSync(c, pin);
                     // the app shows "Visible" afterwards; problems are reported through the log + a message
                     c.getSharedPreferences("zk", 0).edit().putBoolean("hidden", false).putBoolean("restore_fail", Shell.hasProblems(res)).commit();
-                } catch (Throwable t) { AppLog.add(c, "restore", "service failed: " + t);
+                } catch (Throwable ignored) {
                 } finally { RESTORING.set(false); done(); }
             } }).start();
             return START_NOT_STICKY;
@@ -128,7 +128,7 @@ public class LockService extends Service {
         new Thread(new Runnable() { public void run() {
             try {
                 Shell.protectAll(c, new BooleanSupplier() { public boolean getAsBoolean() { return cancel; } });
-            } catch (Throwable t) { AppLog.add(c, "lock", "service failed: " + t);
+            } catch (Throwable ignored) {
             } finally { RUNNING.set(false); done(); }
         } }).start();
         return START_NOT_STICKY;

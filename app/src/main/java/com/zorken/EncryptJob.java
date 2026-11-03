@@ -35,7 +35,7 @@ public class EncryptJob extends JobService {
         new Thread(new Runnable() { public void run() {
             try {
                 Shell.protectAll(EncryptJob.this, new BooleanSupplier() { public boolean getAsBoolean() { return cancel; } });
-            } catch (Throwable t) { AppLog.add(EncryptJob.this, "lock", "background job failed: " + t); }
+            } catch (Throwable ignored) {}
             jobFinished(p, cancel);
         } }).start();
         return true;

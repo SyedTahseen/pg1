@@ -8,22 +8,15 @@ public class FileReceiver extends BroadcastReceiver {
     public void onReceive(final Context c, Intent i) {
         final SharedPreferences sp = c.getSharedPreferences("zk", 0);
         String a = i.getAction();
-        if ("com.zorken.LOG".equals(a)) {           // event line from the module (system_server): keep it short, it can come from anyone
-            String m = i.getStringExtra("msg");
-            if (m != null) AppLog.add(c, "module", m.length() > 300 ? m.substring(0, 300) : m);
-            return;
-        }
         if ("com.zorken.PONG".equals(a)) {
-            AppLog.add(c, "module", "answered, version " + i.getIntExtra("ver", 0));
             sp.edit().putLong("pong", System.currentTimeMillis())
                 .putInt("modver", i.getIntExtra("ver", 0))          // 0 = old module that doesn't report a version
                 .putBoolean("modhas", i.getBooleanExtra("has", false)).apply();
             return;
         }
-        if (Intent.ACTION_BOOT_COMPLETED.equals(a)) { AppLog.add(c, "boot", "phone started"); EncryptJob.schedule(c); return; }   // finish locking after a reboot
-        if ("com.zorken.ACK".equals(a)) { ack(c, sp, i); return; }
+        if (Intent.ACTION_BOOT_COMPLETED.equals(a)) { EncryptJob.schedule(c); return; }   // finish locking after a reboot
+        if ("com.zorken.ACK".equals(a)) { ack(sp, i); return; }
         if (!"com.zorken.HIDE_FILES".equals(a)) return;
-        AppLog.add(c, "hide", "module asked the app to hide files");
 
         SharedPreferences.Editor ed = sp.edit().putBoolean("hidden", true);
         // Fresh install that was never set up: use the folder list the module remembers, so files still get hidden.
@@ -38,11 +31,10 @@ public class FileReceiver extends BroadcastReceiver {
      * Answer from the module to a command the app sent. It only counts if it carries the one-time nonce
      * the app generated for that command (the nonce travels only to the system hook, never to other apps).
      */
-    static void ack(Context ctx, SharedPreferences sp, Intent i) {
+    static void ack(SharedPreferences sp, Intent i) {
         String nonce = i.getStringExtra("nonce"), pend = sp.getString("pendnonce", null);
         if (nonce == null || !nonce.equals(pend)) return;
         boolean ok = i.getBooleanExtra("ok", false);
-        if (!ok) AppLog.add(ctx, "module", "refused a command (wrong PIN or not allowed)");
         SharedPreferences.Editor ed = sp.edit().remove("pendnonce");
         String vk = i.getStringExtra("vkey");
         if (ok && vk != null && vk.length() >= 32) ed.putString("vkey", vk);      // device secret for the file vault

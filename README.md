@@ -49,8 +49,6 @@ Optional: put a font at `app/src/main/assets/fonts/ui.ttf` (e.g. Outfit or Sora)
 | `Shell.java` | Hide/restore/lock logic, path rules, progress tracking |
 | `Vault.java` | Pure-Java encryption (key bundle, containers, chunked AES-GCM) |
 | `LockService.java` | Foreground service: locking and restoring |
-| `AppLog.java` | One persistent log (`files/zorken.log`, ~256 KB cap) shown on the **Logs** card: hide/lock/restore, module events, settings, crashes |
-| `ZorkenApp.java` | Writes app crashes to the log |
 | `EncryptJob.java` | Fallback job for locking; `schedule()` starts the service first |
 | `FileReceiver.java` | Receives the module's answers and the "hide files" request |
 | `Common.java` | Shared helpers and the module protocol version |
@@ -58,14 +56,3 @@ Optional: put a font at `app/src/main/assets/fonts/ui.ttf` (e.g. Outfit or Sora)
 ## Automatic builds
 Every push builds the APK with GitHub Actions and signs it with a key kept in the Actions cache.
 If that cache is ever evicted you must uninstall the old app before installing a new one.
-
-## Hide app icon
-Settings > **Hide app icon** (Off / On pill) disables the launcher alias (`.LauncherAlias`). Open Zorken afterwards from LSPosed > Modules > Zorken (module settings),
-then switch it off to bring the icon back. Reinstalling the app also brings the icon back.
-
-## Logs
-The **Logs** card (newest first, Refresh / Copy / Clear) lists everything the app did. Module events (wrong attempts, apps hidden/shown) are sent
-by the hook, so they appear after one reboot following the update.
-
-## Display size
-The **Display size** card scales the app's own interface (70%-140%, 10% steps) with a -/+ pill. It does not change the phone's DPI.
