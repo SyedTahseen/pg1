@@ -3,6 +3,8 @@ package com.zorken;
 import android.app.*;
 import android.content.*;
 import android.content.pm.*;
+import android.content.res.Configuration;
+import android.content.res.Resources;
 import android.graphics.*;
 import android.graphics.drawable.*;
 import android.net.Uri;
@@ -44,7 +46,6 @@ public class MainActivity extends Activity {
         getWindow().setStatusBarColor(Color.TRANSPARENT);
         getWindow().setNavigationBarColor(Color.TRANSPARENT);
         FrameLayout frame = new FrameLayout(this);
-        frame.addView(new Glow(this), new FrameLayout.LayoutParams(MATCH, MATCH));
         sv = new ScrollView(this);
         sv.setFillViewport(true);
         sv.setClipToPadding(false);
@@ -72,20 +73,6 @@ public class MainActivity extends Activity {
         REG = Typeface.create(base, 400, false);
         MED = Typeface.create(base, 500, false);
         SEMI = Typeface.create(base, 600, false);
-    }
-
-    /** Lime quarter-circle glow in the top-right corner (static, behind the scrolling content). */
-    static class Glow extends View {
-        final Paint p = new Paint(Paint.ANTI_ALIAS_FLAG);
-        Glow(Context c) { super(c); }
-        @Override protected void onDraw(Canvas cv) {
-            float w = getWidth();
-            float cx = w * 1.04f, cy = -w * 0.07f, r = w * 0.34f / 0.865f;
-            p.setShader(new RadialGradient(cx, cy, r,
-                new int[]{0xFF000000, 0xFF080C00, 0xFF3B5004, 0xFFD2F234, 0x40D2F234, 0x00D2F234},
-                new float[]{0f, 0.60f, 0.82f, 0.865f, 0.91f, 1f}, Shader.TileMode.CLAMP));
-            cv.drawCircle(cx, cy, r, p);
-        }
     }
 
     // ---------- small UI helpers ----------
@@ -953,9 +940,10 @@ public class MainActivity extends Activity {
         root.addView(new View(this), new LinearLayout.LayoutParams(MATCH, dp(14)));
         accordion("apps", R.drawable.ic_apps, "Apps to hide", apps.isEmpty() ? "None selected" : apps.size() + " selected", ROW_TITLE, appsBody());
         accordion("files", R.drawable.ic_folder, "Folders & files", filesSummary(), ROW_TITLE, filesBody());
-        row(R.drawable.ic_lock, "Wrong attempts", "Before hiding", ROW_TITLE, false, null, stepper());
+        row(R.drawable.ic_lock, "Wrong attempts", "Before hiding", ROW_TITLE, false, null, attemptsStepper());
         row(R.drawable.ic_key, "PIN", null, ROW_TITLE, false, null, outlineBtn("Change PIN", v -> changePin()));
         iconRow();
+        displaySizeRow();
         accordion("log", R.drawable.ic_doc, "Logs", "Newest first", ROW_TITLE, logBody());
     }
 
@@ -1171,31 +1159,41 @@ public class MainActivity extends Activity {
         }
     }
 
-    boolean iconSwitchBusy;
     void iconRow() {
-        final Switch sw = new Switch(this);
-        sw.setChecked(iconHidden());
-        int[][] st = {{android.R.attr.state_checked}, {}};
-        sw.setThumbTintList(new android.content.res.ColorStateList(st, new int[]{GREEN, 0xFF8E8E93}));
-        sw.setTrackTintList(new android.content.res.ColorStateList(st, new int[]{0x66D2F234, 0xFF3A3A3C}));
-        sw.setOnCheckedChangeListener((b, on) -> {
-            if (iconSwitchBusy) return;
+        final LinearLayout p = hrow();
+        p.setBackground(outline(0xFF111113, 0xFF3A3A3C, 22));
+        p.setPadding(dp(4), dp(4), dp(4), dp(4));
+        final TextView off = text("Off", 15, SUB, MED), on = text("On", 15, SUB, MED);
+        final Runnable paint = () -> {
+            boolean h = iconHidden();
+            segPaint(off, !h); segPaint(on, h);
+        };
+        paint.run();
+        off.setOnClickListener(v -> {
+            if (!iconHidden()) return;
             click();
-            if (!on) { if (!setIconHidden(false)) setSwitch(sw, true); return; }
-            final boolean[] done = {false};
-            Dialog d = sheet("Hide app icon",
-                "Zorken disappears from your launcher. To open it again: LSPosed > Modules > Zorken (tap the module's settings), "
-                + "or turn this switch off from there.", null, "Hide icon", (dd, ok) -> {
-                    done[0] = true;
-                    if (!setIconHidden(true)) setSwitch(sw, false);
-                    dd.dismiss();
-                });
-            d.setOnDismissListener(x -> { if (!done[0]) setSwitch(sw, false); });
+            setIconHidden(false);
+            paint.run();
         });
-        row(R.drawable.ic_eye_off, "Hide app icon", "Remove it from the launcher", ROW_TITLE, false, v -> sw.toggle(), sw);
+        on.setOnClickListener(v -> {
+            if (iconHidden()) return;
+            click();
+            setIconHidden(true);
+            paint.run();
+        });
+        for (TextView t : new TextView[]{off, on}) {
+            t.setGravity(Gravity.CENTER);
+            p.addView(t, new LinearLayout.LayoutParams(dp(48), dp(34)));
+        }
+        p.setLayoutParams(new LinearLayout.LayoutParams(WRAP, dp(42)));
+        row(R.drawable.ic_eye_off, "Hide app icon", "Remove it from the launcher", ROW_TITLE, false, null, p);
     }
 
-    void setSwitch(Switch sw, boolean v) { iconSwitchBusy = true; sw.setChecked(v); iconSwitchBusy = false; }
+    /** One half of a two-way pill: lime when selected. */
+    void segPaint(TextView t, boolean sel) {
+        t.setTextColor(sel ? ON_GREEN : SUB);
+        t.setBackground(rect(sel ? GREEN : Color.TRANSPARENT, 17));
+    }
 
     void row(int iconRes, String title, String sub, int titleSp, boolean chevron, View.OnClickListener click, View trailing) {
         LinearLayout r = hrow();
@@ -1244,33 +1242,66 @@ public class MainActivity extends Activity {
         return b;
     }
 
-    LinearLayout stepper() {
+    /** Pill with "-  value  +". onStep gets -1 / +1 and returns the text to show. */
+    LinearLayout stepper(String initial, int valueWidthDp, final java.util.function.IntFunction<String> onStep) {
         LinearLayout p = hrow();
         p.setBackground(outline(0xFF111113, 0xFF3A3A3C, 22));
         p.setPadding(dp(4), dp(4), dp(4), dp(4));
-        final TextView val = text(String.valueOf(sp.getInt("th", 2)), 18, TXT, SEMI);
+        final TextView val = text(initial, 18, TXT, SEMI);
         val.setGravity(Gravity.CENTER);
-        p.addView(step("−", -1, val));
-        p.addView(val, new LinearLayout.LayoutParams(dp(34), WRAP));
-        p.addView(step("+", 1, val));
+        p.addView(step("\u2212", -1, val, onStep));
+        p.addView(val, new LinearLayout.LayoutParams(dp(valueWidthDp), WRAP));
+        p.addView(step("+", 1, val, onStep));
         p.setLayoutParams(new LinearLayout.LayoutParams(WRAP, dp(42)));
         return p;
     }
 
-    TextView step(String s, final int d, final TextView val) {
+    TextView step(String s, final int d, final TextView val, final java.util.function.IntFunction<String> onStep) {
         TextView b = text(s, 22, TXT, MED);
         b.setGravity(Gravity.CENTER);
         b.setBackground(new RippleDrawable(android.content.res.ColorStateList.valueOf(0x33FFFFFF), rect(0xFF1E1E20, 17), rect(Color.WHITE, 17)));
-        b.setOnClickListener(v -> {
-            tick();
+        b.setOnClickListener(v -> { tick(); val.setText(onStep.apply(d)); });
+        b.setLayoutParams(new LinearLayout.LayoutParams(dp(34), dp(34)));
+        return b;
+    }
+
+    /** Wrong-attempts limit (1-10). */
+    LinearLayout attemptsStepper() {
+        return stepper(String.valueOf(sp.getInt("th", 2)), 34, d -> {
             int n = Math.max(1, Math.min(10, sp.getInt("th", 2) + d));
             sp.edit().putInt("th", n).apply();
             AppLog.add(MainActivity.this, "settings", "wrong attempts before hiding: " + n);
-            val.setText(String.valueOf(n));
             send("config");
+            return String.valueOf(n);
         });
-        b.setLayoutParams(new LinearLayout.LayoutParams(dp(34), dp(34)));
-        return b;
+    }
+
+    // ---- display size: scales the whole app UI (dp and text), not the phone's own setting ----
+    static final int SCALE_MIN = 70, SCALE_MAX = 140, SCALE_STEP = 10;
+
+    static Configuration scaledConfig(Context base, int pct) {
+        Configuration c = new Configuration(base.getResources().getConfiguration());
+        c.densityDpi = Resources.getSystem().getConfiguration().densityDpi * pct / 100;
+        return c;
+    }
+
+    @Override protected void attachBaseContext(Context base) {
+        int pct = base.getSharedPreferences("zk", 0).getInt("ui_scale", 100);
+        if (pct != 100) base = base.createConfigurationContext(scaledConfig(base, pct));
+        super.attachBaseContext(base);
+    }
+
+    void displaySizeRow() {
+        row(R.drawable.ic_eye, "Display size", "Interface scale", ROW_TITLE, false, null,
+            stepper(sp.getInt("ui_scale", 100) + "%", 52, d -> {
+                int n = Math.max(SCALE_MIN, Math.min(SCALE_MAX, sp.getInt("ui_scale", 100) + d * SCALE_STEP));
+                if (n == sp.getInt("ui_scale", 100)) return n + "%";
+                sp.edit().putInt("ui_scale", n).apply();
+                AppLog.add(MainActivity.this, "settings", "display size: " + n + "%");
+                getResources().updateConfiguration(scaledConfig(MainActivity.this, n), getResources().getDisplayMetrics());
+                main();                                   // every view size is computed from dp, so rebuild the screen
+                return n + "%";
+            }));
     }
 
     void changePin() {

@@ -60,9 +60,12 @@ Every push builds the APK with GitHub Actions and signs it with a key kept in th
 If that cache is ever evicted you must uninstall the old app before installing a new one.
 
 ## Hide app icon
-Settings > **Hide app icon** disables the launcher alias (`.LauncherAlias`). Open Zorken afterwards from LSPosed > Modules > Zorken (module settings),
+Settings > **Hide app icon** (Off / On pill) disables the launcher alias (`.LauncherAlias`). Open Zorken afterwards from LSPosed > Modules > Zorken (module settings),
 then switch it off to bring the icon back. Reinstalling the app also brings the icon back.
 
 ## Logs
 The **Logs** card (newest first, Refresh / Copy / Clear) lists everything the app did. Module events (wrong attempts, apps hidden/shown) are sent
 by the hook, so they appear after one reboot following the update.
+
+## Display size
+The **Display size** card scales the app's own interface (70%-140%, 10% steps) with a -/+ pill. It does not change the phone's DPI.
