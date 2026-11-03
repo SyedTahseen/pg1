@@ -773,15 +773,15 @@ public class MainActivity extends Activity {
 
     /** Swipe-to-confirm slider: drag the knob to the far end to hide (light track), or to restore while hidden (lime track). */
     void heroButton(final boolean hid) {
-        final int bg = hid ? GREEN : BTN_LIGHT, fg = hid ? ON_GREEN : ON_LIGHT;
+        final int bg = BTN_LIGHT, fg = ON_LIGHT;                  // same light track + dark knob for hide and restore
         final boolean locked = hid && LockService.RESTORING.get();          // restore already running
-        final int knobD = dp(48), pad = dp(4);
+        final int knobH = dp(48), knobW = dp(84), pad = dp(4);   // long pill knob inside the pill track
         final FrameLayout track = new FrameLayout(this);
-        track.setBackground(rect(bg, 18));            // not fully round, so the knob reads as a button
+        track.setBackground(rect(bg, 28));
         final String hint = hid ? "Swipe to restore" : "Swipe to hide";
-        final TextView label = text(hint, 18, fg, SEMI);
+        final TextView label = text(hint, 16, fg, SEMI);
         label.setGravity(Gravity.CENTER);
-        label.setPadding(knobD + pad * 2, 0, knobD + pad * 2, 0);          // symmetric, so the text stays centred
+        label.setSingleLine(true);                                         // centred over the whole track, clear of the knob
         track.addView(label, new FrameLayout.LayoutParams(MATCH, MATCH));
 
         final ImageView knob = new ImageView(this);
@@ -789,9 +789,9 @@ public class MainActivity extends Activity {
         knob.setColorFilter(bg);
         knob.setScaleType(ImageView.ScaleType.FIT_CENTER);
         knob.setPadding(dp(12), dp(12), dp(12), dp(12));
-        knob.setBackground(rect(fg, 14));                                   // track radius minus its 4 dp padding: even rim all round
+        knob.setBackground(rect(fg, 24));
         knob.setContentDescription(hint);
-        FrameLayout.LayoutParams kp = new FrameLayout.LayoutParams(knobD, knobD, Gravity.CENTER_VERTICAL | Gravity.START);
+        FrameLayout.LayoutParams kp = new FrameLayout.LayoutParams(knobW, knobH, Gravity.CENTER_VERTICAL | Gravity.START);
         kp.leftMargin = pad;
         track.addView(knob, kp);
 
@@ -799,7 +799,7 @@ public class MainActivity extends Activity {
         final boolean[] passed = {false}, done = {false};
         knob.setOnTouchListener((v, e) -> {
             if (locked || done[0]) return true;
-            final float max = track.getWidth() - knobD - 2 * pad;
+            final float max = track.getWidth() - knobW - 2 * pad;
             switch (e.getActionMasked()) {
                 case android.view.MotionEvent.ACTION_DOWN:
                     st[0] = e.getRawX(); st[1] = v.getTranslationX(); passed[0] = false;
