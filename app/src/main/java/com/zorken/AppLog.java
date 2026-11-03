@@ -6,13 +6,11 @@ import java.text.SimpleDateFormat;
 import java.util.Date;
 import java.util.Locale;
 
-/** One persistent log for the whole app (hide, lock, restore, module answers, settings, crashes). Oldest lines are dropped at ~256 KB. */
 public class AppLog {
     static final String FILE = "zorken.log";
     static final long MAX = 256 * 1024, KEEP = 160 * 1024;
     static final Object LOCK = new Object();
 
-    /** Appends one line per line of msg, each stamped with the time and tag. Never throws. */
     public static void add(Context c, String tag, String msg) {
         if (c == null || msg == null) return;
         try {
@@ -31,7 +29,6 @@ public class AppLog {
         } catch (Throwable ignored) {}
     }
 
-    /** The whole log, oldest first. Empty string when nothing was logged yet. */
     public static String read(Context c) {
         try {
             synchronized (LOCK) {
@@ -46,7 +43,6 @@ public class AppLog {
         synchronized (LOCK) { new File(c.getApplicationContext().getFilesDir(), FILE).delete(); }
     }
 
-    /** Keeps the newest KEEP bytes, starting at a line boundary. */
     private static void trim(File f) {
         try {
             byte[] b = Shell.readAll(f);

@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write   # needed to publish the "latest" release
+  contents: write
 
 jobs:
   build:
@@ -20,7 +20,6 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      # The runner already ships the Android SDK (ANDROID_HOME); just accept licenses so Gradle can fetch anything missing.
       - name: Accept Android SDK licenses
         run: yes | "$ANDROID_HOME"/cmdline-tools/*/bin/sdkmanager --licenses > /dev/null || true
 
@@ -28,7 +27,6 @@ jobs:
         with:
           gradle-version: '8.5'
 
-      # Same signing key on every build, so new APKs install over old ones.
       - name: Restore signing key
         id: key
         uses: actions/cache@v4
@@ -53,7 +51,6 @@ jobs:
           name: Zorken-apk
           path: Zorken.apk
 
-      # On main/master: also publish a "latest" release so you can download the APK straight on your phone.
       - name: Move "latest" tag
         if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')
         run: |

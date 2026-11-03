@@ -13,10 +13,8 @@
     <meta-data android:name="xposedminversion" android:value="93"/>
     <meta-data android:name="xposedscope" android:resource="@array/scope"/>
     <activity android:name=".MainActivity" android:exported="true">
-      <!-- lets LSPosed open the app from the module's settings button even when the launcher icon is hidden -->
       <intent-filter><action android:name="android.intent.action.MAIN"/><category android:name="de.robv.android.xposed.category.MODULE_SETTINGS"/></intent-filter>
     </activity>
-    <!-- the launcher icon: disabled / enabled by the "Hide app icon" switch -->
     <activity-alias android:name=".LauncherAlias" android:targetActivity=".MainActivity" android:enabled="true" android:exported="true">
       <intent-filter><action android:name="android.intent.action.MAIN"/><category android:name="android.intent.category.LAUNCHER"/></intent-filter>
     </activity-alias>

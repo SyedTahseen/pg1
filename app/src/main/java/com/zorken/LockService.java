@@ -14,24 +14,18 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.BooleanSupplier;
 
-/**
- * Foreground service that does the long file work: locking (encrypting) hidden items and restoring them.
- * A normal background job / activity thread gets stopped by Android after a few minutes or when the app is left;
- * a foreground service with a notification and a wake lock is allowed to run until the work is done.
- */
 public class LockService extends Service {
     static final String CH = "zk_lock";
     static final int NID = 7002;
     static final String ACT_RESTORE = "com.zorken.RESTORE";
-    static final AtomicBoolean RUNNING = new AtomicBoolean(false);     // locking
+    static final AtomicBoolean RUNNING = new AtomicBoolean(false);
     static final AtomicBoolean RESTORING = new AtomicBoolean(false);
-    static volatile String pendingPin;        // handed over in memory only (never written to disk)
+    static volatile String pendingPin;
     private final AtomicInteger active = new AtomicInteger();
     private volatile boolean cancel;
     private PowerManager.WakeLock wl;
     private Thread ticker;
 
-    /** Returns false if the service could not be started (Android blocks starting it from some background states). */
     static boolean start(Context c) {
         try {
             c.getApplicationContext().startForegroundService(new Intent(c, LockService.class));
@@ -39,7 +33,6 @@ public class LockService extends Service {
         } catch (Throwable t) { return false; }
     }
 
-    /** Restores everything in the service so it keeps going when the app is left. false = could not start. */
     static boolean restore(Context c, String pin) {
         pendingPin = pin;
         try {
@@ -63,7 +56,6 @@ public class LockService extends Service {
         else startForeground(NID, note(text, -1));
     }
 
-    /** One job finished; when none is left, release everything and stop. */
     private void done() {
         if (active.decrementAndGet() > 0) return;
         if (wl != null && wl.isHeld()) wl.release();
@@ -85,7 +77,7 @@ public class LockService extends Service {
         ticker = new Thread(new Runnable() { public void run() {
             try {
                 while (active.get() > 0) {
-                    SharedPreferences sp = c.getSharedPreferences("zk", 0);
+                    SharedPreferences sp = Common.prefs(c);
                     String ph = sp.getString("zk_phase", null);
                     long t = sp.getLong("zk_total", 0), d = sp.getLong("zk_done", 0);
                     if (ph != null && t > 0 && nm != null) {
@@ -115,15 +107,14 @@ public class LockService extends Service {
             new Thread(new Runnable() { public void run() {
                 try {
                     String res = Shell.restoreSync(c, pin);
-                    // the app shows "Visible" afterwards; problems are reported through the log + a message
-                    c.getSharedPreferences("zk", 0).edit().putBoolean("hidden", false).putBoolean("restore_fail", Shell.hasProblems(res)).commit();
+                    Common.prefs(c).edit().putBoolean("hidden", false).putBoolean("restore_fail", Shell.hasProblems(res)).commit();
                 } catch (Throwable t) { AppLog.add(c, "restore", "service failed: " + t);
                 } finally { RESTORING.set(false); done(); }
             } }).start();
             return START_NOT_STICKY;
         }
 
-        if (!RUNNING.compareAndSet(false, true)) { if (active.get() == 0) stopSelf(); return START_NOT_STICKY; }   // already locking
+        if (!RUNNING.compareAndSet(false, true)) { if (active.get() == 0) stopSelf(); return START_NOT_STICKY; }
         begin();
         new Thread(new Runnable() { public void run() {
             try {

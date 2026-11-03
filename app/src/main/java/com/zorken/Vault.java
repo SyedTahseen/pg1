@@ -9,17 +9,6 @@ import java.util.function.BooleanSupplier;
 import javax.crypto.*;
 import javax.crypto.spec.*;
 
-/**
- * Encryption for the .zorken vault. Plain Java only (no Android classes) so it can be tested anywhere.
- *
- * Locking needs NO PIN, unlocking does:
- *  - A key bundle holds an EC (P-256) public key in the clear and the matching private key encrypted with
- *    AES-GCM under a key made from the PIN (PBKDF2) and, when the module provides one, a device secret
- *    (so copying the files off the phone is not enough to brute-force a short PIN).
- *  - Every locked item is ONE container file: a fresh EC key pair per item + ECDH with the bundle's public key
- *    gives a unique AES-256 key. The data is a simple archive (folders/files, no size limit) cut in 1 MiB
- *    AES-GCM chunks; chunk index and "last chunk" flag are authenticated, so reordering/truncation is detected.
- */
 public final class Vault {
     static final int CHUNK = 1 << 20;
     static final int ITER = 300000;
@@ -27,19 +16,14 @@ public final class Vault {
     static final byte[] FMAGIC = {'Z', 'K', 'E', '1'};
     static final SecureRandom RND = new SecureRandom();
 
-    /** Thrown when the caller's stop flag asked the work to pause. */
     public static class Stopped extends IOException { Stopped() { super("stopped"); } }
 
-    /** Counts used to compare what was written with what a verification read finds. */
     static final class Counts { long files, dirs, bytes, skipped; }
 
-    /** Optional progress hook: called with the number of plain bytes just processed (writing, verifying or restoring). */
     public static volatile java.util.function.LongConsumer PROGRESS;
     private static void report(long n) { java.util.function.LongConsumer p = PROGRESS; if (p != null && n > 0) p.accept(n); }
 
     private Vault() {}
-
-    // ------------------------------------------------------------------ key bundle
 
     static byte[] pbkdf(char[] pin, byte[] salt, int iter) throws GeneralSecurityException {
         PBEKeySpec spec = new PBEKeySpec(pin, salt, iter, 256);
@@ -111,7 +95,6 @@ public final class Vault {
         return bo.toByteArray();
     }
 
-    /** Creates a brand-new key pair and returns the bundle (public key + PIN-protected private key). */
     public static byte[] newBundle(char[] pin, byte[] vkey) throws GeneralSecurityException, IOException {
         KeyPairGenerator g = KeyPairGenerator.getInstance("EC");
         g.initialize(new ECGenParameterSpec("secp256r1"));
@@ -134,21 +117,17 @@ public final class Vault {
         if (x.vk) k = hmac(vkey, k);
         Cipher c = gcm(Cipher.DECRYPT_MODE, k, x.iv);
         c.updateAAD(x.head);
-        return c.doFinal(x.ct);          // AEADBadTagException = wrong PIN
+        return c.doFinal(x.ct);
     }
 
-    /** Unlocks the private key. Wrong PIN -> AEADBadTagException; device secret needed but absent -> IllegalStateException. */
     public static PrivateKey unlock(byte[] bundle, char[] pin, byte[] vkey) throws GeneralSecurityException, IOException {
         return KeyFactory.getInstance("EC").generatePrivate(new PKCS8EncodedKeySpec(privateBytes(bundle, pin, vkey)));
     }
 
-    /** Same key pair, protected by a new PIN (and by vkey when given). Also used to add the device secret later. */
     public static byte[] rewrap(byte[] bundle, char[] oldPin, char[] newPin, byte[] vkey) throws GeneralSecurityException, IOException {
         byte[] raw = privateBytes(bundle, oldPin, vkey);
         return seal(parse(bundle).pub, raw, newPin, vkey);
     }
-
-    // ------------------------------------------------------------------ per-item key
 
     private static byte[] itemKey(PrivateKey mine, PublicKey theirs, byte[] ephPubEnc) throws GeneralSecurityException {
         KeyAgreement ka = KeyAgreement.getInstance("ECDH");
@@ -156,8 +135,6 @@ public final class Vault {
         ka.doPhase(theirs, true);
         return hmac(ka.generateSecret(), "ZKE1-key".getBytes(StandardCharsets.UTF_8), ephPubEnc);
     }
-
-    // ------------------------------------------------------------------ chunk streams
 
     private static byte[] ivFor(long idx) {
         byte[] iv = new byte[12];
@@ -172,7 +149,6 @@ public final class Vault {
         return a;
     }
 
-    /** Buffers 1 MiB, emits [len][AES-GCM chunk]. The last chunk is flagged final. close() does NOT close the target. */
     private static final class ChunkOut extends OutputStream {
         private final OutputStream out; private final byte[] key; private final byte[] buf = new byte[CHUNK];
         private int n; private long idx; private boolean closed;
@@ -180,7 +156,7 @@ public final class Vault {
         @Override public void write(int b) throws IOException { write(new byte[]{(byte) b}, 0, 1); }
         @Override public void write(byte[] b, int off, int len) throws IOException {
             while (len > 0) {
-                if (n == CHUNK) emit(false);          // only flush a full chunk once more data is known to follow
+                if (n == CHUNK) emit(false);
                 int k = Math.min(len, CHUNK - n);
                 System.arraycopy(b, off, buf, n, k);
                 n += k; off += k; len -= k;
@@ -252,15 +228,12 @@ public final class Vault {
         }
     }
 
-    // ------------------------------------------------------------------ archive (inside the chunks)
-
     private static void writeName(DataOutputStream d, String name) throws IOException {
         byte[] nb = name.getBytes(StandardCharsets.UTF_8);
         d.writeShort(nb.length);
         d.write(nb);
     }
 
-    /** One thing to put in a container: a file (dir == false) or an empty folder, stored under the given archive name. */
     public static final class Entry {
         public final File f; public final String name; public final boolean dir;
         public Entry(File f, String name, boolean dir) { this.f = f; this.name = name; this.dir = dir; }
@@ -297,7 +270,6 @@ public final class Vault {
         return f;
     }
 
-    /** Reads a whole container. dst == null: just authenticate and count (verification). Never overwrites existing files. */
     private static Counts read(File container, PrivateKey priv, byte[] knownKey, File dst, BooleanSupplier stop) throws Exception {
         Counts cnt = new Counts();
         try (InputStream raw = new BufferedInputStream(new FileInputStream(container), 1 << 16)) {
@@ -326,7 +298,7 @@ public final class Vault {
                     File f = dst == null ? null : target(dst, name);
                     File tmp = null;
                     OutputStream o = null;
-                    if (f != null && f.exists() && (!f.isFile() || f.length() != size)) cnt.skipped++;   // a different file is already there
+                    if (f != null && f.exists() && (!f.isFile() || f.length() != size)) cnt.skipped++;
                     if (f != null && !f.exists()) {
                         File par = f.getParentFile();
                         if (!par.isDirectory() && !par.mkdirs()) throw new IOException("cannot create " + par);
@@ -360,13 +332,6 @@ public final class Vault {
         return cnt;
     }
 
-    // ------------------------------------------------------------------ public operations
-
-    /**
-     * Writes the entries into outTmp as one encrypted container, then re-reads it with the same key to prove every chunk
-     * authenticates and the counts match. Returns normally only when the container is good. A big folder is locked as
-     * several small containers (each verified, its plain files removed, before the next starts); restore reads them all the same way.
-     */
     public static void encrypt(java.util.List<Entry> entries, File outTmp, PublicKey recipient, BooleanSupplier stop) throws Exception {
         KeyPairGenerator g = KeyPairGenerator.getInstance("EC");
         g.initialize(new ECGenParameterSpec("secp256r1"));
@@ -392,11 +357,6 @@ public final class Vault {
         if (r.files != w.files || r.dirs != w.dirs || r.bytes != w.bytes) throw new IOException("verification mismatch");
     }
 
-    /**
-     * Restores a container into dstParent (the item comes back as dstParent/<topName>). Existing files are never
-     * overwritten. Returns how many files were NOT restored because a different file already sits at their place
-     * (the caller must then keep the container).
-     */
     public static long extract(File container, PrivateKey priv, File dstParent, BooleanSupplier stop) throws Exception {
         return read(container, priv, null, dstParent, stop).skipped;
     }

@@ -2,7 +2,6 @@ package com.zorken;
 
 import android.app.Application;
 
-/** Writes any crash of the app (UI, lock service, receivers) to the Logs screen before the process dies. */
 public class ZorkenApp extends Application {
     @Override public void onCreate() {
         super.onCreate();

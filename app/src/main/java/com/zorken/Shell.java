@@ -7,31 +7,22 @@ import java.io.*;
 import java.util.*;
 import java.security.PrivateKey;
 import java.security.PublicKey;
+import java.nio.file.Files;
+import java.nio.file.StandardCopyOption;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.BooleanSupplier;
 
-/**
- * Hides a folder/file in two steps:
- *  1. instantly moves it into the hidden vault folder ".zorken" at the root of the same storage volume
- *     (/storage/emulated/0/.zorken/<id>_<name>); a same-volume move is a plain rename;
- *  2. in the background (LockService -> protectAll()) packs it into encrypted containers
- *     (/storage/emulated/0/.zorken/<id>.<n>.zk) in small steps: each container is verified before the plain files it
- *     holds are deleted, so an interruption never loses progress.
- * Restore needs the PIN to open containers; items still waiting to be locked (or hidden by older versions
- * with the in-place ".zkh_" name) restore without it.
- * Order of attempts for a move: normal rename -> (reason logged) -> optional root "mv" fallback -> file-by-file move.
- */
 public class Shell {
     static final String[] ALIASES = {"/storage/emulated/0/", "/storage/self/primary/", "/sdcard/", "/data/media/0/"};
-    static final String PREFIX = ".zkh_";   // legacy in-place hiding (older versions)
+    static final String PREFIX = ".zkh_";
     static final String VAULT = ".zorken";
-    static final String EXT = ".zk";          // locked-container extension
-    static final String KEYS = ".keys";       // copy of the key bundle inside every vault (survives an app reinstall)
+    static final String EXT = ".zk";
+    static final String KEYS = ".keys";
     static final Object LOCK = new Object();
-    static final java.util.concurrent.atomic.AtomicInteger applyActive = new java.util.concurrent.atomic.AtomicInteger();   // hide/restore running or waiting
-    static volatile boolean stopReq;           // hide/restore ask a running protect() to pause
+    static final AtomicInteger applyActive = new AtomicInteger();
+    static volatile boolean stopReq;
 
-    /** returns {realPath, plainStagePath (inside .zorken), legacyHiddenPath (old in-place name), containerPrefix} or null if the path isn't allowed. */
     static String[] resolve(String p) {
         String base = null, rel = null;
         for (String a : ALIASES) if (p.startsWith(a)) { base = "/storage/emulated/0"; rel = p.substring(a.length()); break; }
@@ -45,9 +36,8 @@ public class Shell {
         }
         if (base == null || rel.isEmpty() || rel.contains("..") || rel.contains("'") || rel.contains("\n")) return null;
         while (rel.endsWith("/")) rel = rel.substring(0, rel.length() - 1);
-        // Only Android's own data folder and our vault are off limits (apps and the system depend on them).
         String low = rel.toLowerCase(Locale.ROOT);
-        if (low.equals(VAULT) || low.startsWith(VAULT + "/")) return null;   // the vault itself is off limits
+        if (low.equals(VAULT) || low.startsWith(VAULT + "/")) return null;
         if (low.equals("android") || low.startsWith("android/")) return null;
         File real = new File(base + "/" + rel);
         if (real.getName().startsWith(PREFIX)) return null;
@@ -56,14 +46,13 @@ public class Shell {
             base + "/" + VAULT + "/" + (rel.hashCode() & 0x7fffffff)};
     }
 
-    /** Moves src into dst without ever overwriting anything. */
     static boolean merge(File src, File dst) {
         boolean ok = true;
         if (src.isDirectory()) {
             if (!dst.exists() && !dst.mkdirs()) return false;
             File[] kids = src.listFiles();
             if (kids != null) for (File k : kids) ok &= merge(k, new File(dst, k.getName()));
-            return src.delete() && ok;      // only succeeds when empty
+            return src.delete() && ok;
         }
         if (dst.exists()) return false;
         return src.renameTo(dst);
@@ -71,14 +60,12 @@ public class Shell {
 
     static boolean hasAccess() { return Environment.isExternalStorageManager(); }
 
-    /** /storage/emulated/0/x -> /data/media/0/x (what root sees underneath Android's storage layer). */
     static String lower(String p) {
         if (p.startsWith("/storage/emulated/0/")) return "/data/media/0/" + p.substring(20);
         if (p.startsWith("/storage/")) return "/mnt/media_rw/" + p.substring(9);
         return null;
     }
 
-    /** Optional root command (10 s limit). Returns null if root is unavailable. */
     static String su(String cmd) {
         try {
             Process p = new ProcessBuilder("su", "-c", cmd).redirectErrorStream(true).start();
@@ -96,11 +83,10 @@ public class Shell {
         } catch (Exception e) { return null; }
     }
 
-    /** Renames from -> to. If Android refuses, logs WHY and tries the fallbacks. */
     static boolean move(File from, File to, StringBuilder log) {
         if (from.renameTo(to)) return true;
         try {
-            java.nio.file.Files.move(from.toPath(), to.toPath(), java.nio.file.StandardCopyOption.ATOMIC_MOVE);
+            Files.move(from.toPath(), to.toPath(), StandardCopyOption.ATOMIC_MOVE);
             return true;
         } catch (Exception e) { log.append("  rename refused: ").append(e).append('\n'); }
         String lf = lower(from.getPath()), lt = lower(to.getPath());
@@ -117,9 +103,6 @@ public class Shell {
         return false;
     }
 
-    // ------------------------------------------------------------------ containers & keys
-
-    /** Existing containers of one item (<prefix>.<n>.zk), oldest first. */
     static List<File> containers(String prefix) {
         File p = new File(prefix), dir = p.getParentFile();
         String pre = p.getName() + ".";
@@ -135,10 +118,9 @@ public class Shell {
     }
 
     static Set<String> pathSet(Context c) {
-        return new HashSet<>(c.getSharedPreferences("zk", 0).getStringSet("paths", new HashSet<String>()));
+        return new HashSet<>(Common.prefs(c).getStringSet("paths", new HashSet<String>()));
     }
 
-    /** Vault folders to look at: the primary storage one plus the one of every selected path. */
     static Set<File> vaultDirs(Set<String> paths) {
         Set<File> out = new LinkedHashSet<>();
         out.add(new File("/storage/emulated/0/" + VAULT));
@@ -167,34 +149,30 @@ public class Shell {
         } catch (Exception ignored) {}
     }
 
-    /** The key bundle: the app's own copy, else the copy kept in a vault (after a reinstall). */
     static byte[] bundle(Context c) {
-        SharedPreferences sp = c.getSharedPreferences("zk", 0);
+        SharedPreferences sp = Common.prefs(c);
         String b64 = sp.getString("vbundle", null);
-        if (b64 != null) try { return java.util.Base64.getDecoder().decode(b64); } catch (Exception ignored) {}
+        if (b64 != null) try { return Base64.getDecoder().decode(b64); } catch (Exception ignored) {}
         for (File v : vaultDirs(pathSet(c))) {
             File k = new File(v, KEYS);
             byte[] b = k.exists() ? readAll(k) : null;
             if (b == null) continue;
             try {
-                Vault.publicKey(b);       // sanity check
-                sp.edit().putString("vbundle", java.util.Base64.getEncoder().encodeToString(b)).apply();
+                Vault.publicKey(b);
+                sp.edit().putString("vbundle", Base64.getEncoder().encodeToString(b)).apply();
                 return b;
             } catch (Exception ignored) {}
         }
         return null;
     }
 
-    static byte[] vkey(Context c) { return Common.unhex(c.getSharedPreferences("zk", 0).getString("vkey", null)); }
+    static byte[] vkey(Context c) { return Common.unhex(Common.prefs(c).getString("vkey", null)); }
 
     static void storeBundle(Context c, byte[] b) {
-        c.getSharedPreferences("zk", 0).edit().putString("vbundle", java.util.Base64.getEncoder().encodeToString(b)).commit();
+        Common.prefs(c).edit().putString("vbundle", Base64.getEncoder().encodeToString(b)).commit();
         for (File v : vaultDirs(pathSet(c))) if (v.isDirectory()) writeKeys(v, b);
     }
 
-    public static boolean hasKey(Context c) { return c.getSharedPreferences("zk", 0).getString("vbundle", null) != null; }
-
-    /** Called after a correct PIN was accepted by the module: makes sure a lock key exists (and is bound to the device secret). */
     public static void ensureBundle(Context c, String pin) {
         try {
             byte[] b = bundle(c), vk = vkey(c);
@@ -203,7 +181,6 @@ public class Shell {
         } catch (Exception e) { save(c, "key", "lock key not updated: " + e); }
     }
 
-    /** PIN changed: re-protect the private key with the new PIN everywhere the bundle is kept. */
     public static void rewrapPin(Context c, String oldPin, String newPin) {
         try {
             byte[] b = bundle(c);
@@ -219,30 +196,26 @@ public class Shell {
         catch (IllegalStateException e) { throw new IOException("device key missing - enable the module, reboot, open the app once"); }
     }
 
-    /** Hidden items that still have a plain copy in .zorken (not locked yet), as resolve() arrays. */
     static List<String[]> waiting(Context c) {
         List<String[]> out = new ArrayList<>();
         for (String p : pathSet(c)) { String[] r = resolve(p); if (r != null && new File(r[1]).exists()) out.add(r); }
         return out;
     }
 
-    /** How many items are hidden but not locked yet. */
     public static int pending(Context c) { return waiting(c).size(); }
 
-    /** True when a hide/restore log reports that something could not be done. */
     static boolean hasProblems(String log) {
         return log.contains("FAILED") || log.contains("LOCKED") || log.contains("could not open");
     }
 
     static boolean deleteTree(File f) {
-        if (java.nio.file.Files.isSymbolicLink(f.toPath())) return f.delete();
+        if (Files.isSymbolicLink(f.toPath())) return f.delete();
         File[] kids = f.isDirectory() ? f.listFiles() : null;
         boolean ok = true;
         if (kids != null) for (File k : kids) ok &= deleteTree(k);
         return f.delete() && ok;
     }
 
-    /** Removes .zorken when nothing is left in it (and the key copy with it). */
     static void cleanVault(File vault) {
         String[] kids = vault.list();
         if (kids == null) return;
@@ -250,13 +223,10 @@ public class Shell {
         if (kids != null && kids.length == 0) vault.delete();
     }
 
-    // ------------------------------------------------------------------ hide / restore
+    static final long BATCH = 256L << 20;
 
-    static final long BATCH = 256L << 20;       // one container holds up to ~256 MB of small files; a big file gets its own
-
-    /** Walks a hidden item: every real file in order, plus folders that contain nothing (so they come back too). */
     static void plan(File f, String name, List<Vault.Entry> out) {
-        if (java.nio.file.Files.isSymbolicLink(f.toPath())) return;
+        if (Files.isSymbolicLink(f.toPath())) return;
         if (f.isDirectory()) {
             File[] kids = f.listFiles();
             if (kids == null || kids.length == 0) { out.add(new Vault.Entry(f, name, true)); return; }
@@ -265,19 +235,17 @@ public class Shell {
         } else if (f.isFile()) out.add(new Vault.Entry(f, name, false));
     }
 
-    // ---- progress (shown as a bar in the app and in the notification) ----
     static long pDone, pTotal, pLast;
     static String pPhase, pName;
 
     static long sizeOf(File f) {
-        if (java.nio.file.Files.isSymbolicLink(f.toPath())) return 0;
+        if (Files.isSymbolicLink(f.toPath())) return 0;
         if (f.isFile()) return f.length();
         long n = 0; File[] k = f.listFiles();
         if (k != null) for (File x : k) n += sizeOf(x);
         return n;
     }
 
-    /** Starts a progress run: phase = "hide" | "lock" | "restore"; total in bytes (or items for "hide"). */
     static synchronized void progStart(final Context c, String phase, long total) {
         pPhase = phase; pTotal = Math.max(1, total); pDone = 0; pName = ""; pLast = 0;
         if (c == null) { Vault.PROGRESS = null; return; }
@@ -290,28 +258,21 @@ public class Shell {
         long now = System.currentTimeMillis();
         if (!force && now - pLast < 400) return;
         pLast = now;
-        c.getSharedPreferences("zk", 0).edit().putString("zk_phase", pPhase).putString("zk_name", pName == null ? "" : pName)
+        Common.prefs(c).edit().putString("zk_phase", pPhase).putString("zk_name", pName == null ? "" : pName)
             .putLong("zk_done", Math.min(pDone, pTotal)).putLong("zk_total", pTotal).putLong("zk_ts", now).apply();
     }
-    /** Ends the run only if it is still the given phase (a hide/restore may have taken over from a paused lock). */
     static synchronized void progEnd(Context c, String phase) {
         if (phase != null && !phase.equals(pPhase)) return;
         Vault.PROGRESS = null; pPhase = null;
-        if (c != null) c.getSharedPreferences("zk", 0).edit().remove("zk_phase").remove("zk_name").remove("zk_done").remove("zk_total").remove("zk_ts").apply();
+        if (c != null) Common.prefs(c).edit().remove("zk_phase").remove("zk_name").remove("zk_done").remove("zk_total").remove("zk_ts").apply();
     }
 
     static String mb(long b) { return (b >> 20) + " MB"; }
 
-    /**
-     * Locks hidden items in the background, ONE SMALL STEP AT A TIME: each step packs a few files into a container,
-     * verifies it, then deletes just those plain files. If anything interrupts (system stop, reboot, app killed, no space)
-     * everything already finished stays locked and the next run continues with what is left, instead of starting over.
-     * Returns true only if it paused because hide/restore needed the lock.
-     */
     public static boolean protect(Context c, final BooleanSupplier cancel) {
         List<String[]> todo = waiting(c);
         if (todo.isEmpty()) return false;
-        if (applyActive.get() > 0) return true;       // a hide/restore is running: wait, then run again
+        if (applyActive.get() > 0) return true;
         byte[] b = bundle(c);
         if (b == null) { save(c, "lock", "NOT LOCKED: no lock key yet. Open Zorken and unlock once."); return false; }
         StringBuilder log = new StringBuilder();
@@ -321,7 +282,7 @@ public class Shell {
             BooleanSupplier stop = new BooleanSupplier() { public boolean getAsBoolean() { return stopReq || cancel.getAsBoolean(); } };
             long sum = 0;
             for (String[] r : todo) sum += sizeOf(new File(r[1]));
-            progStart(c, "lock", sum * 2);          // every byte is written once and read once to verify it
+            progStart(c, "lock", sum * 2);
             outer:
             for (String[] r : todo) {
                 String name = new File(r[0]).getName();
@@ -368,12 +329,11 @@ public class Shell {
                         } catch (Exception e) {
                             tmp.delete();
                             log.append("FAILED to lock ").append(name).append(": ").append(e).append(" (").append(mb(done)).append(" of ").append(mb(total)).append(" locked so far)\n");
-                            break;      // next item; this one is retried on the next run
+                            break;
                         }
                     }
                 }
                 if (i >= all.size()) synchronized (LOCK) {
-                    // every file is inside a verified container: remove what remains of the plain tree (empty folders)
                     boolean gone = deleteTree(plain);
                     log.append(gone ? "locked: " : "locked (plain copy not fully removed): ").append(name).append('\n');
                 }
@@ -384,16 +344,14 @@ public class Shell {
         return yielded;
     }
 
-    /** Locks everything that is waiting. protect() asks for another round when a hide/restore made it pause. */
     public static void protectAll(Context c, BooleanSupplier cancel) throws InterruptedException {
         for (int n = 0; n < 20 && protect(c, cancel) && !cancel.getAsBoolean(); n++) Thread.sleep(500);
     }
 
-    /** Synchronized + idempotent: running it twice at once (app + module trigger) is harmless. c/pin are only needed to open locked items on restore. */
     static String apply(Set<String> paths, boolean hide, Context c, String pin) {
         applyActive.incrementAndGet();
         try {
-            stopReq = true;                   // make a running protect() let go of the lock
+            stopReq = true;
             synchronized (LOCK) {
                 stopReq = false;
                 return apply0(paths, hide, c, pin);
@@ -430,7 +388,7 @@ public class Shell {
                     log.append(ok ? "hidden: " : "FAILED: ").append(p).append('\n');
                 } else {
                     File old = new File(r[2]);
-                    if (!plain.exists() && old.exists()) plain = old;                 // hidden by an older version
+                    if (!plain.exists() && old.exists()) plain = old;
                     List<File> cs = containers(r[3]);
                     if (!plain.exists() && cs.isEmpty()) { log.append(real.exists() ? "already visible: " : "nothing to restore: ").append(p).append('\n'); continue; }
                     boolean ok = true;
@@ -446,7 +404,7 @@ public class Shell {
                         for (File f : cs) {
                             try {
                                 long clash = Vault.extract(f, priv, parent, new BooleanSupplier() { public boolean getAsBoolean() { return false; } });
-                                if (clash == 0) f.delete();       // only drop the container once everything in it is back
+                                if (clash == 0) f.delete();
                                 else { ok = false; log.append("  kept ").append(f.getName()).append(" in .zorken: ").append(clash).append(" file(s) clash with different files already in place\n"); }
                             }
                             catch (Exception e) { ok = false; log.append("  could not open ").append(f.getName()).append(": ").append(e).append('\n'); }

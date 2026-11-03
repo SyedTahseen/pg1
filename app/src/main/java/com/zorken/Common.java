@@ -1,10 +1,15 @@
 package com.zorken;
+import android.content.Context;
+import android.content.SharedPreferences;
 import java.security.MessageDigest;
 public class Common {
-    /** Module protocol version. Bump when the app <-> hook commands change; the app warns if the running hook is older (needs a reboot). */
     public static final int MODULE_VER = 4;
+    public static final String HEX64 = "[0-9a-f]{64}";
 
-    /** Random hex string of n bytes (device secret of the file vault, one-time command nonces). */
+    public static SharedPreferences prefs(Context c) { return c.getSharedPreferences("zk", 0); }
+
+    public static int limit(int n) { return Math.max(1, Math.min(10, n)); }
+
     public static String randHex(int n) {
         byte[] b = new byte[n];
         new java.security.SecureRandom().nextBytes(b);
@@ -15,7 +20,6 @@ public class Common {
         for (byte x : d) b.append(String.format("%02x", x));
         return b.toString();
     }
-    /** Hex -> bytes, or null when s is missing/malformed. */
     public static byte[] unhex(String s) {
         if (s == null || s.length() < 2 || s.length() % 2 != 0) return null;
         byte[] o = new byte[s.length() / 2];
@@ -33,7 +37,6 @@ public class Common {
         } catch (Exception e) { return ""; }
     }
 
-    /** Core packages that must never be hidden (hiding them can black-screen or bootloop the phone). */
     public static boolean isCoreName(String p) {
         return p.equals("com.zorken") || p.equals("android") || p.equals("com.android.systemui")
             || p.equals("com.android.settings") || p.equals("com.android.phone")
