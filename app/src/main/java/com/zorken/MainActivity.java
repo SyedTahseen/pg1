@@ -771,39 +771,96 @@ public class MainActivity extends Activity {
         progView(c);
     }
 
-    /** The big pill: white "Hide now", or lime "Restore everything" while hidden. */
+    /** Swipe-to-confirm slider: drag the knob to the far end to hide (light track), or to restore while hidden (lime track). */
     void heroButton(final boolean hid) {
-        int bg = hid ? GREEN : BTN_LIGHT, fg = hid ? ON_GREEN : ON_LIGHT;
-        LinearLayout b = hrow();
-        b.setGravity(Gravity.CENTER);
-        b.setBackground(ripple(bg, 28, fg));
-        b.setClickable(true);
-        LinearLayout.LayoutParams ip = new LinearLayout.LayoutParams(dp(26), dp(26));
-        ip.rightMargin = dp(14);
-        b.addView(ico(hid ? R.drawable.ic_eye : R.drawable.ic_eye_off, 26, fg), ip);
-        b.addView(text(hid ? "Restore everything" : "Hide now", 18, fg, SEMI));
-        b.setOnClickListener(v -> {
-            click();
-            if (hid) {
-                send("restore");
-                // The service keeps going when the app is left; "hidden" is cleared by it when the restore is done.
-                if (!LockService.restore(MainActivity.this, pin)) {
-                    sp.edit().putBoolean("hidden", false).apply();
-                    new Thread(() -> {
-                        if (Shell.hasProblems(Shell.restoreSync(MainActivity.this, pin)))
-                            runOnUiThread(() -> errorToast("Some items could not be restored. See the log."));
-                    }).start();
+        final int bg = hid ? GREEN : BTN_LIGHT, fg = hid ? ON_GREEN : ON_LIGHT;
+        final boolean locked = hid && LockService.RESTORING.get();          // restore already running
+        final int knobD = dp(48), pad = dp(4);
+        final FrameLayout track = new FrameLayout(this);
+        track.setBackground(rect(bg, 28));
+        final String hint = hid ? "Swipe to restore" : "Swipe to hide";
+        final TextView label = text(hint, 18, fg, SEMI);
+        label.setGravity(Gravity.CENTER);
+        label.setPadding(knobD + pad * 2, 0, knobD + pad * 2, 0);          // symmetric, so the text stays centred
+        track.addView(label, new FrameLayout.LayoutParams(MATCH, MATCH));
+
+        final ImageView knob = new ImageView(this);
+        knob.setImageResource(hid ? R.drawable.ic_eye : R.drawable.ic_eye_off);
+        knob.setColorFilter(bg);
+        knob.setScaleType(ImageView.ScaleType.FIT_CENTER);
+        knob.setPadding(dp(11), dp(11), dp(11), dp(11));
+        GradientDrawable kb = new GradientDrawable(); kb.setShape(GradientDrawable.OVAL); kb.setColor(fg);
+        knob.setBackground(kb);
+        knob.setContentDescription(hint);
+        FrameLayout.LayoutParams kp = new FrameLayout.LayoutParams(knobD, knobD, Gravity.CENTER_VERTICAL | Gravity.START);
+        kp.leftMargin = pad;
+        track.addView(knob, kp);
+
+        final float[] st = {0, 0};                                         // finger x at touch-down, knob offset at touch-down
+        final boolean[] passed = {false}, done = {false};
+        knob.setOnTouchListener((v, e) -> {
+            if (locked || done[0]) return true;
+            final float max = track.getWidth() - knobD - 2 * pad;
+            switch (e.getActionMasked()) {
+                case android.view.MotionEvent.ACTION_DOWN:
+                    st[0] = e.getRawX(); st[1] = v.getTranslationX(); passed[0] = false;
+                    v.animate().cancel();
+                    v.getParent().requestDisallowInterceptTouchEvent(true);   // don't let the ScrollView steal the drag
+                    tick();
+                    return true;
+                case android.view.MotionEvent.ACTION_MOVE: {
+                    float tx = Math.max(0, Math.min(max, st[1] + e.getRawX() - st[0]));
+                    v.setTranslationX(tx);
+                    float f = max > 0 ? tx / max : 0;
+                    label.setAlpha(Math.max(0f, 1f - f * 1.6f));
+                    boolean p = f >= 0.9f;
+                    if (p && !passed[0]) tick();                              // feel the "release now" point
+                    passed[0] = p;
+                    return true;
                 }
-                toast("Restoring...");
-            } else {
-                send("hide"); sp.edit().putBoolean("hidden", true).apply();
-                new Thread(() -> { Shell.hideSync(MainActivity.this); EncryptJob.schedule(MainActivity.this); }).start();
-                toast("Hiding...");
+                case android.view.MotionEvent.ACTION_UP:
+                case android.view.MotionEvent.ACTION_CANCEL: {
+                    boolean up = e.getActionMasked() == android.view.MotionEvent.ACTION_UP;
+                    float f = max > 0 ? v.getTranslationX() / max : 0;
+                    if (up && f >= 0.9f) {
+                        done[0] = true;
+                        click();
+                        v.animate().translationX(max).setDuration(80).withEndAction(() -> runHeroAction(hid)).start();
+                    } else if (up && Math.abs(e.getRawX() - st[0]) < dp(6)) {   // just a tap: nudge to show it has to be dragged
+                        v.animate().translationX(dp(28)).setDuration(110)
+                            .withEndAction(() -> v.animate().translationX(0).setDuration(160).start()).start();
+                    } else {                                                    // let go too early: spring back
+                        v.animate().translationX(0).setDuration(200).start();
+                        label.animate().alpha(1f).setDuration(200).start();
+                    }
+                    return true;
+                }
             }
-            main();
+            return false;
         });
-        if (hid && LockService.RESTORING.get()) { b.setEnabled(false); b.setAlpha(0.5f); }   // restore already running
-        root.addView(b, lp(MATCH, dp(56), 20));
+        if (locked) track.setAlpha(0.5f);
+        root.addView(track, lp(MATCH, dp(56), 20));
+    }
+
+    /** What the slider does once it reaches the end. */
+    void runHeroAction(boolean hid) {
+        if (hid) {
+            send("restore");
+            // The service keeps going when the app is left; "hidden" is cleared by it when the restore is done.
+            if (!LockService.restore(MainActivity.this, pin)) {
+                sp.edit().putBoolean("hidden", false).apply();
+                new Thread(() -> {
+                    if (Shell.hasProblems(Shell.restoreSync(MainActivity.this, pin)))
+                        runOnUiThread(() -> errorToast("Some items could not be restored. See the log."));
+                }).start();
+            }
+            toast("Restoring...");
+        } else {
+            send("hide"); sp.edit().putBoolean("hidden", true).apply();
+            new Thread(() -> { Shell.hideSync(MainActivity.this); EncryptJob.schedule(MainActivity.this); }).start();
+            toast("Hiding...");
+        }
+        main();
     }
 
     // ---- flat settings list (icon, title, optional subtitle, trailing control, divider) ----
@@ -972,7 +1029,7 @@ public class MainActivity extends Activity {
     /** The last file-hiding log, in place, with a Copy button. */
     View logBody() {
         LinearLayout p = panel();
-        final String log = sp.getString("log", "Nothing yet. Tap Hide now first.");
+        final String log = sp.getString("log", "Nothing yet. Swipe to hide first.");
         TextView lt = text(log, 12, SUB, false);
         lt.setTextIsSelectable(true);
         ScrollView box = scroller(lt);

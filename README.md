@@ -21,7 +21,7 @@ A correct phone unlock restores nothing.
   the next run continues with what is left. Free space needed is about one file, not the whole item.
   If Android refuses to start the service, a JobScheduler job (`EncryptJob`) does the same work.
 - **Restore**: also runs in the foreground service (notification + progress). The app stays on "Hidden" until it is done;
-  if interrupted, tap "Restore everything" again. A container is deleted only after everything in it is back; existing files are never overwritten.
+  if interrupted, swipe to restore again. A container is deleted only after everything in it is back; existing files are never overwritten.
 - **Progress bars** show hiding (items), locking (bytes written + verified) and restoring (bytes) on the main screen and in the notification.
 - Locking needs no PIN. Unlocking needs the PIN **and** a device secret kept by the module (`/data/system/zk_config`),
   so copying `.zorken` off the phone is not enough to brute-force a short PIN. A copy of the key bundle (`.zorken/.keys`) stays next to the files so a reinstall keeps working.
@@ -35,7 +35,7 @@ After updating the APK, **reboot once** when the status card says "older version
 ## Recovery
 - Something breaks: disable the module in LSPosed and reboot.
 - Forgot PIN: with root delete `/data/system/zk_config`, reboot, reinstall the app. Files that were already locked cannot be opened without that secret.
-- Files stuck as plain files in `.zorken` (interrupted locking): open the app (it resumes) or "Restore everything".
+- Files stuck as plain files in `.zorken` (interrupted locking): open the app (it resumes) or swipe to restore.
 
 ## UI
 Flat list layout with a lime accent and a corner glow. Icons are vector drawables in `res/drawable` (`ic_*.xml`).
