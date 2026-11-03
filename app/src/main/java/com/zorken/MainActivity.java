@@ -660,6 +660,7 @@ public class MainActivity extends Activity {
         boolean r = "ok".equals(rootState), m = "ok".equals(modState);
         boolean busy = "checking".equals(rootState) || "checking".equals(modState);
         boolean good = r && m;
+        if (!busy && !good) { attentionCard(r, m); return; }
         int ac = busy ? SUB : good ? GREEN : RED;
         LinearLayout c = vcol();
         c.setBackground(busy ? grad(0xFF232325, 0xFF161618, CARD2, 24)
@@ -707,6 +708,73 @@ public class MainActivity extends Activity {
             rc.setOnClickListener(v -> { click(); rootState = "checking"; modState = "checking"; checked = false; main(); });
             c.addView(rc);
         }
+    }
+
+    /** "Needs attention": a calm dark card with one block per problem (what, why, and the button that fixes it) and a re-check button. */
+    void attentionCard(boolean storageOk, boolean moduleOk) {
+        int n = (storageOk ? 0 : 1) + (moduleOk ? 0 : 1);
+        LinearLayout c = vcol();
+        c.setBackground(grad(0xFF2E1719, 0xFF161012, 0x44FF6B6B, 24));
+        c.setPadding(dp(22), dp(20), dp(22), dp(20));
+        root.addView(c, lp(MATCH, WRAP, 28));
+
+        LinearLayout top = hrow();
+        c.addView(top, new LinearLayout.LayoutParams(MATCH, WRAP));
+        LinearLayout left = vcol();
+        top.addView(left, new LinearLayout.LayoutParams(0, WRAP, 1f));
+        left.addView(text("Needs attention", 26, TXT, true));
+        TextView sub = text(n == 1 ? "1 thing to fix" : n + " things to fix", 15, SUB, false);
+        sub.setPadding(0, dp(2), 0, 0);
+        left.addView(sub);
+        FrameLayout badge = new FrameLayout(this);
+        GradientDrawable g = new GradientDrawable();
+        g.setShape(GradientDrawable.OVAL); g.setColor(Color.TRANSPARENT); g.setStroke(dp(3), RED);
+        badge.setBackground(g);
+        TextView sym = text("!", 24, RED, true);
+        sym.setGravity(Gravity.CENTER);
+        badge.addView(sym, new FrameLayout.LayoutParams(MATCH, MATCH));
+        top.addView(badge, new LinearLayout.LayoutParams(dp(46), dp(46)));
+
+        View line = new View(this);
+        line.setBackgroundColor(0x22FF6B6B);
+        c.addView(line, lp(MATCH, dp(1), 18));
+
+        if (!moduleOk) issue(c, R.drawable.ic_key, "LSPosed module", "old".equals(modState)
+            ? "Running an older version. Reboot so the updated module loads (needed for PIN change and restoring settings)."
+            : "Not responding. Enable it in LSPosed (scope: System Framework), then reboot.", null, null);
+        if (!storageOk) issue(c, R.drawable.ic_folder, "Storage access",
+            "Not granted. Allow \"All files access\" so folders can be hidden.", "Grant access",
+            v -> startActivity(new Intent(android.provider.Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION,
+                Uri.parse("package:" + getPackageName()))));
+
+        c.addView(pill("Re-check", 0x22FFFFFF, TXT, v -> { rootState = "checking"; modState = "checking"; checked = false; main(); }),
+            lp(MATCH, dp(46), 20));
+    }
+
+    /** One problem inside the attention card: red icon tile, title, explanation and an optional fix button. */
+    void issue(LinearLayout c, int icon, String title, String desc, String action, View.OnClickListener fix) {
+        LinearLayout r = hrow();
+        r.setGravity(Gravity.TOP);
+        FrameLayout tile = new FrameLayout(this);
+        tile.setBackground(rect(RED_BG, 12));
+        tile.addView(ico(icon, 20, RED), new FrameLayout.LayoutParams(dp(20), dp(20), Gravity.CENTER));
+        r.addView(tile, new LinearLayout.LayoutParams(dp(40), dp(40)));
+        LinearLayout col = vcol();
+        col.addView(text(title, 16, TXT, true));
+        TextView d = text(desc, 13, SUB, false);
+        d.setPadding(0, dp(3), 0, 0);
+        col.addView(d);
+        if (action != null) {
+            Button b = outlineBtn(action, v -> { click(); fix.onClick(v); });
+            b.setTextSize(14);
+            LinearLayout.LayoutParams bp = new LinearLayout.LayoutParams(WRAP, dp(38));
+            bp.topMargin = dp(10);
+            col.addView(b, bp);
+        }
+        LinearLayout.LayoutParams cp = new LinearLayout.LayoutParams(0, WRAP, 1f);
+        cp.leftMargin = dp(14);
+        r.addView(col, cp);
+        c.addView(r, lp(MATCH, WRAP, 18));
     }
 
     void statusLine(LinearLayout c, String name, String st, String okTxt, String badTxt) {
