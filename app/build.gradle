@@ -2,7 +2,7 @@ plugins { id 'com.android.application' }
 android {
     namespace 'com.zorken'
     compileSdk 34
-    defaultConfig { applicationId 'com.zorken'; minSdk 30; targetSdk 34; versionCode 13; versionName '0.4.0' }
+    defaultConfig { applicationId 'com.zorken'; minSdk 30; targetSdk 34; versionCode 14; versionName '1.0.0' }
     signingConfigs {
         stable {
             if (file('stable.keystore').exists()) {

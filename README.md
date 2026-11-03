@@ -1,4 +1,4 @@
-# Zorken (LSPosed module + app) - v0.4.0
+# Zorken (LSPosed module + app) - v1.0.0
 
 Hides selected apps and files after N wrong phone-unlock attempts. Restore only from this app with your secret PIN.
 A correct phone unlock restores nothing.
