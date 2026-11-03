@@ -128,7 +128,7 @@ public class MainActivity extends Activity {
         return v;
     }
     Button pill(String s, int bg, int fg, View.OnClickListener l) {
-        Button b = new Button(this);
+        Button b = new Button(this) { @Override public boolean performClick() { click(); return super.performClick(); } };
         b.setText(s); b.setAllCaps(false); b.setTextColor(fg); b.setTextSize(15);
         b.setTypeface(MED);
         b.setBackground(ripple(bg, 28, fg));
@@ -235,6 +235,16 @@ public class MainActivity extends Activity {
             if (vib != null && vib.hasVibrator()) vib.vibrate(VibrationEffect.createOneShot(250, VibrationEffect.DEFAULT_AMPLITUDE));
         } catch (Throwable ignored) {}
     }
+    /** Light haptic tap. Uses the vibrator directly: performHapticFeedback() is silent when the phone's "touch feedback" is off. */
+    void buzz(int effect) {
+        try {
+            Vibrator vib = (Vibrator) getSystemService(Context.VIBRATOR_SERVICE);
+            if (vib != null && vib.hasVibrator()) vib.vibrate(VibrationEffect.createPredefined(effect));
+        } catch (Throwable ignored) {}
+    }
+    View.OnClickListener h(final View.OnClickListener l) { return v -> { click(); l.onClick(v); }; }
+    void tick()  { buzz(VibrationEffect.EFFECT_TICK); }    // PIN keys, stepper
+    void click() { buzz(VibrationEffect.EFFECT_CLICK); }   // buttons, rows, accordions
     Set<String> set(String k) { return new HashSet<>(sp.getStringSet(k, new HashSet<String>())); }
 
     static final int MATCH_HIDDEN = PackageManager.MATCH_UNINSTALLED_PACKAGES | PackageManager.MATCH_DISABLED_COMPONENTS
@@ -450,7 +460,7 @@ public class MainActivity extends Activity {
             if (busy[0] || buf.length() >= PIN_LEN) return;
             setErr(err, null);
             buf.append(((TextView) v).getText());
-            v.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP);
+            tick();
             refresh.run();
             if (buf.length() == PIN_LEN) v.postDelayed(() -> submit[0].run(), 120);   // let the last dot fill first
         };
@@ -478,9 +488,9 @@ public class MainActivity extends Activity {
         back.setClickable(true);
         back.setContentDescription("Delete");
         back.setOnClickListener(v -> {
-            if (!busy[0] && buf.length() > 0) { buf.setLength(buf.length() - 1); setErr(err, null); refresh.run(); }
+            if (!busy[0] && buf.length() > 0) { tick(); buf.setLength(buf.length() - 1); setErr(err, null); refresh.run(); }
         });
-        back.setOnLongClickListener(v -> { if (busy[0]) return true; buf.setLength(0); setErr(err, null); refresh.run(); return true; });
+        back.setOnLongClickListener(v -> { if (busy[0]) return true; click(); buf.setLength(0); setErr(err, null); refresh.run(); return true; });
         last.addView(keyCell(back), new LinearLayout.LayoutParams(0, WRAP, 1f));
         pad.addView(last, lp(MATCH, WRAP, 14));
         root.addView(pad, lp(MATCH, WRAP, 6));
@@ -612,7 +622,7 @@ public class MainActivity extends Activity {
         ImageView more = ico(R.drawable.ic_more, 24, TXT);
         more.setPadding(dp(12), dp(12), dp(12), dp(12));
         more.setBackground(plainRipple());
-        more.setOnClickListener(this::menu);
+        more.setOnClickListener(h(this::menu));
         LinearLayout.LayoutParams mp = new LinearLayout.LayoutParams(dp(48), dp(48));
         mp.rightMargin = -dp(14);
         top.addView(more, mp);
@@ -627,6 +637,7 @@ public class MainActivity extends Activity {
         m.getMenu().add(0, 1, 0, "Re-check status");
         m.getMenu().add(0, 2, 1, "Change PIN");
         m.setOnMenuItemClickListener(it -> {
+            click();
             if (it.getItemId() == 1) { rootState = "checking"; modState = "checking"; checked = false; main(); }
             else changePin();
             return true;
@@ -675,14 +686,14 @@ public class MainActivity extends Activity {
         if ("bad".equals(rootState)) {
             TextView gr = text("Grant storage access", 14, GREEN, true);
             gr.setPadding(0, dp(12), 0, 0);
-            gr.setOnClickListener(v -> startActivity(new Intent(android.provider.Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION,
-                Uri.parse("package:" + getPackageName()))));
+            gr.setOnClickListener(v -> { click(); startActivity(new Intent(android.provider.Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION,
+                Uri.parse("package:" + getPackageName()))); });
             c.addView(gr);
         }
         if (!busy && !good) {
             TextView rc = text("Tap to re-check", 13, ac, true);
             rc.setPadding(0, dp(14), 0, 0);
-            rc.setOnClickListener(v -> { rootState = "checking"; modState = "checking"; checked = false; main(); });
+            rc.setOnClickListener(v -> { click(); rootState = "checking"; modState = "checking"; checked = false; main(); });
             c.addView(rc);
         }
     }
@@ -772,6 +783,7 @@ public class MainActivity extends Activity {
         b.addView(ico(hid ? R.drawable.ic_eye : R.drawable.ic_eye_off, 26, fg), ip);
         b.addView(text(hid ? "Restore everything" : "Hide now", 18, fg, SEMI));
         b.setOnClickListener(v -> {
+            click();
             if (hid) {
                 send("restore");
                 // The service keeps going when the app is left; "hidden" is cleared by it when the restore is done.
@@ -838,6 +850,7 @@ public class MainActivity extends Activity {
         r.addView(chev);
         r.setBackground(plainRipple());
         r.setOnClickListener(v -> {
+            click();
             boolean o = !open.contains(key);
             if (o) open.add(key); else open.remove(key);
             android.transition.TransitionManager.beginDelayedTransition(root);
@@ -932,6 +945,7 @@ public class MainActivity extends Activity {
             x.setBackground(plainRipple());
             x.setContentDescription("Remove");
             x.setOnClickListener(v -> {
+                click();
                 if (sp.getBoolean("hidden", false)) { setErr(err, "Restore first, then edit the list"); return; }
                 Set<String> s2 = set("paths"); s2.remove(path);
                 sp.edit().putStringSet("paths", s2).apply(); send("config");
@@ -989,7 +1003,7 @@ public class MainActivity extends Activity {
         r.addView(col, cp);
         if (trailing != null) r.addView(trailing);
         else if (chevron) r.addView(ico(R.drawable.ic_chevron, 22, TXT));
-        if (click != null) { r.setBackground(plainRipple()); r.setOnClickListener(click); }
+        if (click != null) { r.setBackground(plainRipple()); r.setOnClickListener(h(click)); }
         root.addView(r, new LinearLayout.LayoutParams(MATCH, WRAP));
         View d = new View(this);
         d.setBackgroundColor(LINE);
@@ -1006,7 +1020,7 @@ public class MainActivity extends Activity {
     }
 
     Button outlineBtn(String s, View.OnClickListener l) {
-        Button b = new Button(this);
+        Button b = new Button(this) { @Override public boolean performClick() { click(); return super.performClick(); } };
         b.setText(s); b.setAllCaps(false); b.setTextColor(TXT); b.setTextSize(15); b.setTypeface(MED);
         b.setBackground(new RippleDrawable(android.content.res.ColorStateList.valueOf(0x22FFFFFF),
             outline(0xFF111113, 0xFF3A3A3C, 22), rect(Color.WHITE, 22)));
@@ -1036,6 +1050,7 @@ public class MainActivity extends Activity {
         b.setGravity(Gravity.CENTER);
         b.setBackground(new RippleDrawable(android.content.res.ColorStateList.valueOf(0x33FFFFFF), rect(0xFF1E1E20, 17), rect(Color.WHITE, 17)));
         b.setOnClickListener(v -> {
+            tick();
             int n = Math.max(1, Math.min(10, sp.getInt("th", 2) + d));
             sp.edit().putInt("th", n).apply();
             val.setText(String.valueOf(n));
@@ -1177,7 +1192,7 @@ public class MainActivity extends Activity {
             cb.setButtonTintList(android.content.res.ColorStateList.valueOf(GREEN));
             cb.setOnCheckedChangeListener((x, c) -> on[idx] = c);
             r.addView(cb);
-            r.setOnClickListener(v -> cb.toggle());
+            r.setOnClickListener(v -> { click(); cb.toggle(); });
             list.addView(r);
         }
         sheet("Apps to hide", null, scroller(list), "OK", (d, ok) -> {
