@@ -777,7 +777,7 @@ public class MainActivity extends Activity {
         final boolean locked = hid && LockService.RESTORING.get();          // restore already running
         final int knobD = dp(48), pad = dp(4);
         final FrameLayout track = new FrameLayout(this);
-        track.setBackground(rect(bg, 28));
+        track.setBackground(rect(bg, 18));            // not fully round, so the knob reads as a button
         final String hint = hid ? "Swipe to restore" : "Swipe to hide";
         final TextView label = text(hint, 18, fg, SEMI);
         label.setGravity(Gravity.CENTER);
@@ -785,12 +785,11 @@ public class MainActivity extends Activity {
         track.addView(label, new FrameLayout.LayoutParams(MATCH, MATCH));
 
         final ImageView knob = new ImageView(this);
-        knob.setImageResource(hid ? R.drawable.ic_eye : R.drawable.ic_eye_off);
+        knob.setImageResource(R.drawable.ic_chevron);
         knob.setColorFilter(bg);
         knob.setScaleType(ImageView.ScaleType.FIT_CENTER);
-        knob.setPadding(dp(11), dp(11), dp(11), dp(11));
-        GradientDrawable kb = new GradientDrawable(); kb.setShape(GradientDrawable.OVAL); kb.setColor(fg);
-        knob.setBackground(kb);
+        knob.setPadding(dp(12), dp(12), dp(12), dp(12));
+        knob.setBackground(rect(fg, 14));                                   // track radius minus its 4 dp padding: even rim all round
         knob.setContentDescription(hint);
         FrameLayout.LayoutParams kp = new FrameLayout.LayoutParams(knobD, knobD, Gravity.CENTER_VERTICAL | Gravity.START);
         kp.leftMargin = pad;
