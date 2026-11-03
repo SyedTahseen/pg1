@@ -609,7 +609,7 @@ public class MainActivity extends Activity {
         statusCard();
         final boolean hid = sp.getBoolean("hidden", false);
         wasHidden = hid;
-        if (hid || progActive()) hiddenCard(hid);
+        if (progActive()) hiddenCard(hid);            // the slider already says whether files are hidden; the card is just the progress
         heroButton(hid);
         settingsList();
         if (!checked) { checked = true; checkStatus(); }
@@ -781,7 +781,8 @@ public class MainActivity extends Activity {
         final String hint = hid ? "Swipe to restore" : "Swipe to hide";
         final TextView label = text(hint, 16, fg, SEMI);
         label.setGravity(Gravity.CENTER);
-        label.setSingleLine(true);                                         // centred over the whole track, clear of the knob
+        label.setSingleLine(true);
+        label.setPadding(knobW + pad * 2, 0, pad * 2, 0);                  // centred in the free space right of the knob
         track.addView(label, new FrameLayout.LayoutParams(MATCH, MATCH));
 
         final ImageView knob = new ImageView(this);
