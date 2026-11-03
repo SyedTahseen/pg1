@@ -945,6 +945,11 @@ public class MainActivity extends Activity {
         iconRow();
         displaySizeRow();
         accordion("log", R.drawable.ic_doc, "Logs", "Newest first", ROW_TITLE, logBody());
+        row(R.drawable.ic_lock_pin, "About Zorken", "Hides your chosen apps and files after wrong unlock attempts. Open source: tap to visit the repository.",
+            ROW_TITLE, true, v -> {
+                try { startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse("https://github.com/syedtahseen/zorken"))); }
+                catch (Throwable t) { errorToast("No app found to open the link"); }
+            }, null);
     }
 
     // ---- accordion rows: tap the row (or its chevron) to expand / collapse the panel under it ----
