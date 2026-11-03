@@ -787,9 +787,22 @@ public class MainActivity extends Activity {
         final TextView label = text(hint, 16, fg, SEMI);
         label.setGravity(Gravity.CENTER);
         label.setSingleLine(true);
-        int gap = knobW + pad * 2 + dp(10);                                // knob + 10 dp of air, on both sides so the text stays centred
+        final int gap = knobW + pad * 2 + dp(8);                           // knob + 8 dp of air, on both sides so the text stays centred
         label.setPadding(gap, 0, gap, 0);
-        label.setAutoSizeTextTypeUniformWithConfiguration(12, 16, 1, android.util.TypedValue.COMPLEX_UNIT_SP);   // shrinks a little on narrow phones instead of touching the knob
+        // fit the text into what is left between the knob and the far edge: measure it, shrink (16 sp down to 10 sp) until it fits
+        track.addOnLayoutChangeListener((v, l, t, r, bt, ol, ot, or, ob) -> {
+            int avail = (r - l) - 2 * gap;
+            if (avail <= 0) return;
+            android.graphics.Paint pt = new android.graphics.Paint(label.getPaint());
+            float size = 16;
+            while (size > 10) {
+                pt.setTextSize(size * getResources().getDisplayMetrics().scaledDensity);
+                if (pt.measureText(hint) <= avail) break;
+                size -= 0.5f;
+            }
+            if (Math.abs(label.getTextSize() - size * getResources().getDisplayMetrics().scaledDensity) > 0.5f)
+                label.setTextSize(android.util.TypedValue.COMPLEX_UNIT_SP, size);
+        });
         track.addView(label, new FrameLayout.LayoutParams(MATCH, MATCH));
 
         final ImageView knob = new ImageView(this);
