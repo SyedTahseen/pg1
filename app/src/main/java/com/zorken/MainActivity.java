@@ -667,8 +667,19 @@ public class MainActivity extends Activity {
         c.setBackground(busy ? grad(0xFF232325, 0xFF161618, CARD2, 24)
             : good ? grad(0xFF4A5A0F, 0xFF1D2407, 0x55D2F234, 24)
             : grad(0xFF5C1D1D, 0xFF2A0E0E, 0x66FF6B6B, 24));
-        c.setPadding(dp(24), dp(20), dp(20), dp(20));
-        root.addView(c, lp(MATCH, WRAP, 28));
+        c.setPadding(dp(24), dp(20), dp(76), dp(20));     // right padding keeps text clear of the big check
+        // The check is a large decoration in the bottom-right corner that the card's rounded edge cuts off.
+        FrameLayout holder = new FrameLayout(this);
+        final int cardR = dp(24);
+        holder.setOutlineProvider(new ViewOutlineProvider() {
+            @Override public void getOutline(View v, Outline o) { o.setRoundRect(0, 0, v.getWidth(), v.getHeight(), cardR); }
+        });
+        holder.setClipToOutline(true);
+        holder.addView(c, new FrameLayout.LayoutParams(MATCH, WRAP));
+        FrameLayout.LayoutParams ap = new FrameLayout.LayoutParams(dp(88), dp(88), Gravity.BOTTOM | Gravity.END);
+        ap.rightMargin = -dp(20); ap.bottomMargin = -dp(24);
+        holder.addView(new StatusArt(this, ac), ap);
+        root.addView(holder, lp(MATCH, WRAP, 28));
         LinearLayout top = hrow();
         c.addView(top, new LinearLayout.LayoutParams(MATCH, WRAP));
         LinearLayout left = vcol();
@@ -678,19 +689,6 @@ public class MainActivity extends Activity {
             good ? 0xFFC9D0AE : SUB, false);
         sub.setPadding(0, dp(2), 0, 0);
         left.addView(sub);
-        FrameLayout badge = new FrameLayout(this);
-        GradientDrawable g = new GradientDrawable();
-        g.setShape(GradientDrawable.OVAL); g.setColor(Color.TRANSPARENT); g.setStroke(dp(3), ac);
-        badge.setBackground(g);
-        if (good) {
-            ImageView ck = ico(R.drawable.ic_check, 24, ac);
-            badge.addView(ck, new FrameLayout.LayoutParams(dp(24), dp(24), Gravity.CENTER));
-        } else {
-            TextView sym = text(busy ? "…" : "!", 24, ac, true);
-            sym.setGravity(Gravity.CENTER);
-            badge.addView(sym, new FrameLayout.LayoutParams(MATCH, MATCH));
-        }
-        top.addView(badge, new LinearLayout.LayoutParams(dp(46), dp(46)));
         statusLine(c, "LSPosed module", modState, "Active", "old".equals(modState)
             ? "Running an older version. Reboot so the updated module loads (needed for PIN change and restoring settings)."
             : "Not responding. Enable it in LSPosed (scope: System Framework), then reboot.");
@@ -824,6 +822,31 @@ public class MainActivity extends Activity {
     }
 
     /** Glowing progress ring that runs clockwise around the slider's outline, starting at the top centre. */
+    /** Big ring with a check, sized to overflow the card's bottom-right corner. */
+    static class StatusArt extends View {
+        final Paint ring = new Paint(Paint.ANTI_ALIAS_FLAG), mark = new Paint(Paint.ANTI_ALIAS_FLAG);
+        StatusArt(Context c, int color) {
+            super(c);
+            ring.setStyle(Paint.Style.STROKE); ring.setColor(color);
+            mark.setStyle(Paint.Style.STROKE); mark.setColor(color);
+            mark.setStrokeCap(Paint.Cap.ROUND); mark.setStrokeJoin(Paint.Join.ROUND);
+            setImportantForAccessibility(IMPORTANT_FOR_ACCESSIBILITY_NO);
+        }
+        @Override protected void onDraw(Canvas cv) {
+            float R = Math.min(getWidth(), getHeight()) / 2f;
+            float cx = getWidth() / 2f, cy = getHeight() / 2f;
+            float rs = R * 0.16f;
+            ring.setStrokeWidth(rs);
+            cv.drawCircle(cx, cy, R - rs / 2f, ring);
+            mark.setStrokeWidth(R * 0.26f);
+            Path p = new Path();
+            p.moveTo(cx - 0.54f * R, cy + 0.10f * R);
+            p.lineTo(cx - 0.22f * R, cy + 0.38f * R);
+            p.lineTo(cx + 0.54f * R, cy - 0.35f * R);
+            cv.drawPath(p, mark);
+        }
+    }
+
     static class GlowRing extends View {
         final Paint base = new Paint(Paint.ANTI_ALIAS_FLAG), glow = new Paint(Paint.ANTI_ALIAS_FLAG), line = new Paint(Paint.ANTI_ALIAS_FLAG);
         final Path path = new Path(), seg = new Path();
