@@ -754,66 +754,51 @@ public class MainActivity extends Activity {
         progLabel.setText(ss);
     }
 
-    /**
-     * Clean progress ring around the slider's outline (clockwise from the top centre): a faint track,
-     * a lime arc that eases smoothly toward the real progress, and a soft glow under it.
-     */
+    /** Glowing progress ring that runs clockwise around the slider's outline, starting at the top centre. */
     static class GlowRing extends View {
-        final Paint track = new Paint(Paint.ANTI_ALIAS_FLAG), arc = new Paint(Paint.ANTI_ALIAS_FLAG), glow = new Paint(Paint.ANTI_ALIAS_FLAG);
+        final Paint base = new Paint(Paint.ANTI_ALIAS_FLAG), glow = new Paint(Paint.ANTI_ALIAS_FLAG), line = new Paint(Paint.ANTI_ALIAS_FLAG);
         final Path path = new Path(), seg = new Path();
         final float inset;                    // distance of the ring's centre line from this view's edge
-        PathMeasure pm;
-        float len, shown = -1, target = -1, time;       // shown < 0: draw nothing (idle slider)
-        long last;
-        android.animation.ValueAnimator loop;
-
+        float shown = -1, target = -1, pulse = 1f;       // shown < 0: draw nothing (idle slider)
+        android.animation.ValueAnimator prog, beat;
         GlowRing(Context c, int color, float stroke, float blur, float inset) {
             super(c);
             this.inset = inset;
-            for (Paint pt : new Paint[]{track, arc, glow}) { pt.setStyle(Paint.Style.STROKE); pt.setStrokeCap(Paint.Cap.ROUND); }
-            track.setStrokeWidth(stroke * 0.6f); track.setColor(0x26FFFFFF);
-            arc.setStrokeWidth(stroke * 0.85f); arc.setColor(color);
+            for (Paint pt : new Paint[]{base, glow, line}) { pt.setStyle(Paint.Style.STROKE); pt.setStrokeCap(Paint.Cap.ROUND); }
+            base.setStrokeWidth(stroke * 0.5f); base.setColor(0x2EFFFFFF);
+            line.setStrokeWidth(stroke); line.setColor(color);
             glow.setStrokeWidth(stroke * 1.6f); glow.setColor(color);
             glow.setMaskFilter(new BlurMaskFilter(blur, BlurMaskFilter.Blur.NORMAL));
         }
-
         float value() { return target; }
-
         void setProgress(float f) {
-            if (f < 0) { target = shown = -1; stopLoop(); invalidate(); return; }
-            if (shown < 0) shown = f;                                  // first value: no refill from empty
-            else if (f < shown - 0.25f) shown = f;                     // a new phase starts again from empty: don't drain
+            if (f < 0) { target = shown = -1; invalidate(); return; }
+            if (Math.abs(f - target) < 0.0005f && shown >= 0) return;
             target = f;
-            startLoop();
+            if (shown < 0) shown = 0;
+            if (prog != null) prog.cancel();
+            prog = android.animation.ValueAnimator.ofFloat(shown, f);
+            prog.setDuration(450);
+            prog.addUpdateListener(a -> { shown = (float) a.getAnimatedValue(); invalidate(); });
+            prog.start();
         }
-
-        void startLoop() {
-            if (loop != null || !isAttachedToWindow()) return;
-            last = android.os.SystemClock.uptimeMillis();
-            loop = android.animation.ValueAnimator.ofFloat(0f, 1f);
-            loop.setDuration(1000);
-            loop.setRepeatCount(android.animation.ValueAnimator.INFINITE);
-            loop.setInterpolator(null);
-            loop.addUpdateListener(a -> {
-                long now = android.os.SystemClock.uptimeMillis();
-                float dt = Math.min(0.1f, (now - last) / 1000f);
-                last = now;
-                time += dt;
-                if (shown >= 0) {                                      // ease toward the real progress (~0.35 s)
-                    shown += (target - shown) * (1f - (float) Math.exp(-dt / 0.35f));
-                    if (Math.abs(target - shown) < 0.0004f) shown = target;
-                }
-                invalidate();
-            });
-            loop.start();
+        @Override protected void onAttachedToWindow() {
+            super.onAttachedToWindow();
+            beat = android.animation.ValueAnimator.ofFloat(0.55f, 1f);           // slow breathing glow
+            beat.setDuration(900);
+            beat.setRepeatMode(android.animation.ValueAnimator.REVERSE);
+            beat.setRepeatCount(android.animation.ValueAnimator.INFINITE);
+            beat.addUpdateListener(a -> { pulse = (float) a.getAnimatedValue(); if (shown > 0) invalidate(); });
+            beat.start();
         }
-        void stopLoop() { if (loop != null) { loop.cancel(); loop = null; } }
-
-        @Override protected void onAttachedToWindow() { super.onAttachedToWindow(); if (shown >= 0) startLoop(); }
-        @Override protected void onDetachedFromWindow() { stopLoop(); super.onDetachedFromWindow(); }
-
-        @Override protected void onSizeChanged(int w, int h, int ow, int oh) {
-            float L = inset, T = inset, R = w - inset, B = h - inset, r = (B - T) / 2f;
+        @Override protected void onDetachedFromWindow() {
+            if (beat != null) beat.cancel();
+            if (prog != null) prog.cancel();
+            super.onDetachedFromWindow();
+        }
+        @Override protected void onDraw(Canvas cv) {
+            if (shown < 0) return;
+            float L = inset, T = inset, R = getWidth() - inset, B = getHeight() - inset, r = (B - T) / 2f;
             path.reset();
             path.moveTo((L + R) / 2f, T);
             path.lineTo(R - r, T);
@@ -821,19 +806,14 @@ public class MainActivity extends Activity {
             path.lineTo(L + r, B);
             path.arcTo(new RectF(L, T, L + 2 * r, B), 90, 180);
             path.close();
-            pm = new PathMeasure(path, false);
-            len = pm.getLength();
-        }
-
-        @Override protected void onDraw(Canvas cv) {
-            if (shown < 0 || pm == null) return;
-            cv.drawPath(path, track);
-            float fl = len * Math.min(1f, shown);
-            if (fl < 1f) return;
-            seg.reset(); pm.getSegment(0, fl, seg, true);
-            glow.setAlpha((int) (255 * (0.5f + 0.1f * (float) Math.sin(time * 2f * Math.PI / 2.4f))));   // very slow, subtle breathing
+            cv.drawPath(path, base);
+            if (shown <= 0.001f) return;
+            PathMeasure pm = new PathMeasure(path, false);
+            seg.reset();
+            pm.getSegment(0, pm.getLength() * Math.min(1f, shown), seg, true);
+            glow.setAlpha((int) (255 * 0.85f * pulse));
             cv.drawPath(seg, glow);
-            cv.drawPath(seg, arc);
+            cv.drawPath(seg, line);
         }
     }
 
@@ -844,7 +824,7 @@ public class MainActivity extends Activity {
         progShown = busy; ring = null; progLabel = null;
         final int knobH = dp(48), knobW = dp(84), pad = dp(4), m = dp(10);   // long pill knob inside the pill track; m = room for the glow
         final FrameLayout wrap = new FrameLayout(this);
-        final GlowRing gr = new GlowRing(this, GREEN, dp(4), dp(6), dp(6) + dp(1) / 2f);
+        final GlowRing gr = new GlowRing(this, GREEN, dp(4), dp(6), dp(6));
         wrap.addView(gr, new FrameLayout.LayoutParams(MATCH, MATCH));
         final FrameLayout track = new FrameLayout(this);
         track.setBackground(rect(bg, 28));
