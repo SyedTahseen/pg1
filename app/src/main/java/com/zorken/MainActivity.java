@@ -755,39 +755,26 @@ public class MainActivity extends Activity {
     }
 
     /**
-     * Progress as liquid filling a glass pipe that runs clockwise around the slider's outline (start: top centre).
-     * Fill level eases toward the real progress like liquid catching up; a wave flows along the surface,
-     * light streaks and bubbles drift through it, and a glowing bulb sits at the leading edge.
+     * Clean progress ring around the slider's outline (clockwise from the top centre): a faint track,
+     * a lime arc that eases smoothly toward the real progress, and a soft glow under it.
      */
     static class GlowRing extends View {
-        final Paint rim = new Paint(Paint.ANTI_ALIAS_FLAG), core = new Paint(Paint.ANTI_ALIAS_FLAG), liquid = new Paint(Paint.ANTI_ALIAS_FLAG),
-            glow = new Paint(Paint.ANTI_ALIAS_FLAG), wave = new Paint(Paint.ANTI_ALIAS_FLAG), streak = new Paint(Paint.ANTI_ALIAS_FLAG),
-            dot = new Paint(Paint.ANTI_ALIAS_FLAG), bulbGlow = new Paint(Paint.ANTI_ALIAS_FLAG), bulb = new Paint(Paint.ANTI_ALIAS_FLAG);
-        final Path path = new Path(), seg = new Path(), part = new Path(), ripple = new Path();
-        final float inset, d;                 // inset: distance of the pipe's centre line from this view's edge; d: 1 dp in px
+        final Paint track = new Paint(Paint.ANTI_ALIAS_FLAG), arc = new Paint(Paint.ANTI_ALIAS_FLAG), glow = new Paint(Paint.ANTI_ALIAS_FLAG);
+        final Path path = new Path(), seg = new Path();
+        final float inset;                    // distance of the ring's centre line from this view's edge
         PathMeasure pm;
-        float len;
-        final float[] xy = new float[2], tan = new float[2];
-        float shown = -1, target = -1, time;  // shown < 0: draw nothing (idle slider)
+        float len, shown = -1, target = -1, time;       // shown < 0: draw nothing (idle slider)
         long last;
         android.animation.ValueAnimator loop;
 
         GlowRing(Context c, int color, float stroke, float blur, float inset) {
             super(c);
             this.inset = inset;
-            d = stroke / 4f;
-            for (Paint pt : new Paint[]{rim, core, liquid, glow, wave, streak}) { pt.setStyle(Paint.Style.STROKE); pt.setStrokeCap(Paint.Cap.ROUND); pt.setStrokeJoin(Paint.Join.ROUND); }
-            rim.setStrokeWidth(6.5f * d);  rim.setColor(0x40FFFFFF);          // glass wall
-            core.setStrokeWidth(4.5f * d); core.setColor(0xFF0E0E10);         // empty pipe inside
-            liquid.setStrokeWidth(4.5f * d); liquid.setColor(color);
-            glow.setStrokeWidth(7f * d); glow.setColor(color);
+            for (Paint pt : new Paint[]{track, arc, glow}) { pt.setStyle(Paint.Style.STROKE); pt.setStrokeCap(Paint.Cap.ROUND); }
+            track.setStrokeWidth(stroke * 0.6f); track.setColor(0x26FFFFFF);
+            arc.setStrokeWidth(stroke * 0.85f); arc.setColor(color);
+            glow.setStrokeWidth(stroke * 1.6f); glow.setColor(color);
             glow.setMaskFilter(new BlurMaskFilter(blur, BlurMaskFilter.Blur.NORMAL));
-            wave.setStrokeWidth(1.4f * d); wave.setColor(0xFFF6FFB4);
-            streak.setStrokeWidth(2.2f * d); streak.setColor(Color.WHITE);
-            dot.setColor(Color.WHITE);
-            bulb.setColor(0xFFF8FFC4);
-            bulbGlow.setColor(color);
-            bulbGlow.setMaskFilter(new BlurMaskFilter(blur, BlurMaskFilter.Blur.NORMAL));
         }
 
         float value() { return target; }
@@ -812,8 +799,8 @@ public class MainActivity extends Activity {
                 float dt = Math.min(0.1f, (now - last) / 1000f);
                 last = now;
                 time += dt;
-                if (shown >= 0) {                                      // liquid level eases toward the real progress (~0.4 s time constant)
-                    shown += (target - shown) * (1f - (float) Math.exp(-dt / 0.4f));
+                if (shown >= 0) {                                      // ease toward the real progress (~0.35 s)
+                    shown += (target - shown) * (1f - (float) Math.exp(-dt / 0.35f));
                     if (Math.abs(target - shown) < 0.0004f) shown = target;
                 }
                 invalidate();
@@ -840,56 +827,13 @@ public class MainActivity extends Activity {
 
         @Override protected void onDraw(Canvas cv) {
             if (shown < 0 || pm == null) return;
-            cv.drawPath(path, rim);                                    // the empty glass pipe
-            cv.drawPath(path, core);
-            float fl = len * Math.min(1f, shown);                      // length of liquid
+            cv.drawPath(path, track);
+            float fl = len * Math.min(1f, shown);
             if (fl < 1f) return;
-
             seg.reset(); pm.getSegment(0, fl, seg, true);
-            float pulse = 0.7f + 0.3f * (float) Math.sin(time * 2f * Math.PI / 1.1f);
-            glow.setAlpha((int) (255 * 0.55f * pulse));
-            cv.drawPath(seg, glow);                                    // soft light spilling out of the pipe
-            cv.drawPath(seg, liquid);                                  // the liquid
-
-            // wave flowing along the surface (the thin bright line wobbling across the pipe)
-            float wl = 22 * d, amp = 1.1f * d, fade = 8 * d;
-            ripple.reset();
-            for (float s = 0; ; s += 3 * d) {
-                boolean end = s >= fl;
-                if (end) s = fl;
-                pm.getPosTan(s, xy, tan);
-                float env = Math.min(1f, Math.min(s, fl - s) / fade);
-                float off = amp * env * (float) Math.sin(2 * Math.PI * (s / wl - time * 0.9f));
-                float x = xy[0] - tan[1] * off, y = xy[1] + tan[0] * off;
-                if (s == 0) ripple.moveTo(x, y); else ripple.lineTo(x, y);
-                if (end) break;
-            }
-            wave.setAlpha(190);
-            cv.drawPath(ripple, wave);
-
-            // light streak that keeps sliding from the start toward the leading edge
-            float band = 14 * d, pos = ((time / 1.5f) % 1f) * (fl + band), a0 = Math.max(0, pos - band), a1 = Math.min(fl, pos);
-            if (a1 - a0 > 1f) {
-                part.reset(); pm.getSegment(a0, a1, part, true);
-                streak.setAlpha(110);
-                cv.drawPath(part, streak);
-            }
-
-            // bubbles drifting along with the flow
-            for (int i = 0; i < 4; i++) {
-                float s = ((time * (0.07f + 0.035f * i) + i * 0.29f) % 1f) * fl;
-                pm.getPosTan(s, xy, tan);
-                float off = 1.1f * d * (float) Math.sin(time * 2.2f + i * 1.9f);
-                dot.setAlpha(150 + 20 * (i % 3));
-                cv.drawCircle(xy[0] - tan[1] * off, xy[1] + tan[0] * off, (0.7f + 0.25f * (i % 3)) * d, dot);
-            }
-
-            // glowing bulb at the leading edge
-            pm.getPosTan(fl, xy, tan);
-            float br = 3.2f * d * (1f + 0.12f * (float) Math.sin(time * 2f * Math.PI / 0.9f));
-            bulbGlow.setAlpha((int) (255 * 0.8f * pulse));
-            cv.drawCircle(xy[0], xy[1], br * 1.7f, bulbGlow);
-            cv.drawCircle(xy[0], xy[1], br, bulb);
+            glow.setAlpha((int) (255 * (0.5f + 0.1f * (float) Math.sin(time * 2f * Math.PI / 2.4f))));   // very slow, subtle breathing
+            cv.drawPath(seg, glow);
+            cv.drawPath(seg, arc);
         }
     }
 
