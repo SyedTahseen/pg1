@@ -51,6 +51,8 @@ public class MainActivity extends Activity {
         root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
         root.setPadding(dp(20), 0, dp(20), dp(24));
+        root.setClipToPadding(false);                         // the slider's glow spills a little into the side padding
+        root.setClipChildren(false);
         sv.addView(root);
         frame.addView(sv, new FrameLayout.LayoutParams(MATCH, MATCH));
         frame.setOnApplyWindowInsetsListener((v, ins) -> {
@@ -604,12 +606,11 @@ public class MainActivity extends Activity {
         final int y = sv.getScrollY();
         root.removeAllViews();
         root.setGravity(Gravity.START);
-        progShown = false; progBar = null; progTxt = null;
+        progShown = false; ring = null; progLabel = null;
         header();
         statusCard();
         final boolean hid = sp.getBoolean("hidden", false);
         wasHidden = hid;
-        if (progActive()) hiddenCard(hid);            // the slider already says whether files are hidden; the card is just the progress
         heroButton(hid);
         settingsList();
         if (!checked) { checked = true; checkStatus(); }
@@ -709,7 +710,7 @@ public class MainActivity extends Activity {
     }
 
     // ---- live progress bar for hiding / locking / restoring ----
-    ProgressBar progBar; TextView progTxt;
+    GlowRing ring; TextView progLabel;               // the slider's glowing border + its centre text while something runs
     boolean progShown, wasHidden;
     final Handler ticker = new Handler(Looper.getMainLooper());
     final Runnable tick = new Runnable() { public void run() {
@@ -733,56 +734,117 @@ public class MainActivity extends Activity {
     }
 
     void progUpdate() {
-        if (progBar == null || progTxt == null) return;
-        String ph = sp.getString("zk_phase", ""), nm = sp.getString("zk_name", "");
-        if (ph.isEmpty()) { progBar.setProgress(0); progTxt.setText("Preparing…"); return; }   // between phases
+        if (ring == null || progLabel == null) return;
+        String ph = sp.getString("zk_phase", "");
         long d = sp.getLong("zk_done", 0), t = Math.max(1, sp.getLong("zk_total", 1));
+        if (ph.isEmpty()) {                                   // between phases (hiding -> locking): keep the ring where it is
+            ring.setProgress(Math.max(0f, ring.value()));
+            progLabel.setText("Working…");
+            return;
+        }
         boolean items = "hide".equals(ph);
         int pct = (int) Math.min(100, d * 100 / t);
-        progBar.setProgress((int) Math.min(1000, d * 1000 / t));
+        ring.setProgress(Math.min(1f, (float) d / t));
         String what = items ? "Hiding" : "lock".equals(ph) ? "Locking" : "Restoring";
         String amt = items ? d + " of " + t + " items" : (d >> 20) + " / " + (t >> 20) + " MB";
-        progTxt.setText(what + (nm.isEmpty() ? "" : " " + nm) + " - " + pct + "%\n" + amt
-            + ("lock".equals(ph) ? "\n(each file is written, then re-read to verify it)" : ""));
+        String l1 = what + " " + pct + "%";
+        android.text.SpannableString ss = new android.text.SpannableString(l1 + "\n" + amt);
+        ss.setSpan(new android.text.style.RelativeSizeSpan(0.72f), l1.length() + 1, ss.length(), 0);
+        ss.setSpan(new android.text.style.ForegroundColorSpan(0xFF5A5A5E), l1.length() + 1, ss.length(), 0);
+        progLabel.setText(ss);
     }
 
-    void progView(LinearLayout c) {
-        progShown = progActive();
-        progBar = null; progTxt = null;
-        if (!progShown) return;
-        progBar = new ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal);
-        progBar.setMax(1000);
-        progBar.setProgressTintList(android.content.res.ColorStateList.valueOf(GREEN));
-        progBar.setProgressBackgroundTintList(android.content.res.ColorStateList.valueOf(CARD2));
-        c.addView(progBar, lp(MATCH, dp(10), 14));
-        progTxt = text("", 13, SUB, false);
-        progTxt.setPadding(0, dp(8), 0, 0);
-        c.addView(progTxt);
-        progUpdate();
-    }
-
-    /** Amber banner shown while apps/files are hidden, with the live progress bar. */
-    void hiddenCard(boolean hid) {
-        LinearLayout c = vcol();
-        c.setBackground(grad(0xFF3A2E17, 0xFF211A0B, 0x55FFB74D, 24));
-        c.setPadding(dp(24), dp(18), dp(24), dp(18));
-        root.addView(c, lp(MATCH, WRAP, 12));
-        final boolean locking = hid && Shell.hasKey(this) && Shell.pending(this) > 0;
-        c.addView(text(hid ? "Hidden" : "Working…", 20, AMBER, true));
-        TextView sub = text(hid ? "Selected apps and files are hidden." + (locking && !progActive() ? " Locking files in the background…" : "")
-            : "Please wait", 14, SUB, false);
-        sub.setPadding(0, dp(2), 0, 0);
-        c.addView(sub);
-        progView(c);
+    /** Glowing progress ring that runs clockwise around the slider's outline, starting at the top centre. */
+    static class GlowRing extends View {
+        final Paint base = new Paint(Paint.ANTI_ALIAS_FLAG), glow = new Paint(Paint.ANTI_ALIAS_FLAG), line = new Paint(Paint.ANTI_ALIAS_FLAG);
+        final Path path = new Path(), seg = new Path();
+        final float inset;                    // distance of the ring's centre line from this view's edge
+        float shown = -1, target = -1, pulse = 1f;       // shown < 0: draw nothing (idle slider)
+        android.animation.ValueAnimator prog, beat;
+        GlowRing(Context c, int color, float stroke, float blur, float inset) {
+            super(c);
+            this.inset = inset;
+            for (Paint pt : new Paint[]{base, glow, line}) { pt.setStyle(Paint.Style.STROKE); pt.setStrokeCap(Paint.Cap.ROUND); }
+            base.setStrokeWidth(stroke * 0.5f); base.setColor(0x2EFFFFFF);
+            line.setStrokeWidth(stroke); line.setColor(color);
+            glow.setStrokeWidth(stroke * 1.6f); glow.setColor(color);
+            glow.setMaskFilter(new BlurMaskFilter(blur, BlurMaskFilter.Blur.NORMAL));
+        }
+        float value() { return target; }
+        void setProgress(float f) {
+            if (f < 0) { target = shown = -1; invalidate(); return; }
+            if (Math.abs(f - target) < 0.0005f && shown >= 0) return;
+            target = f;
+            if (shown < 0) shown = 0;
+            if (prog != null) prog.cancel();
+            prog = android.animation.ValueAnimator.ofFloat(shown, f);
+            prog.setDuration(450);
+            prog.addUpdateListener(a -> { shown = (float) a.getAnimatedValue(); invalidate(); });
+            prog.start();
+        }
+        @Override protected void onAttachedToWindow() {
+            super.onAttachedToWindow();
+            beat = android.animation.ValueAnimator.ofFloat(0.55f, 1f);           // slow breathing glow
+            beat.setDuration(900);
+            beat.setRepeatMode(android.animation.ValueAnimator.REVERSE);
+            beat.setRepeatCount(android.animation.ValueAnimator.INFINITE);
+            beat.addUpdateListener(a -> { pulse = (float) a.getAnimatedValue(); if (shown > 0) invalidate(); });
+            beat.start();
+        }
+        @Override protected void onDetachedFromWindow() {
+            if (beat != null) beat.cancel();
+            if (prog != null) prog.cancel();
+            super.onDetachedFromWindow();
+        }
+        @Override protected void onDraw(Canvas cv) {
+            if (shown < 0) return;
+            float L = inset, T = inset, R = getWidth() - inset, B = getHeight() - inset, r = (B - T) / 2f;
+            path.reset();
+            path.moveTo((L + R) / 2f, T);
+            path.lineTo(R - r, T);
+            path.arcTo(new RectF(R - 2 * r, T, R, B), -90, 180);
+            path.lineTo(L + r, B);
+            path.arcTo(new RectF(L, T, L + 2 * r, B), 90, 180);
+            path.close();
+            cv.drawPath(path, base);
+            if (shown <= 0.001f) return;
+            PathMeasure pm = new PathMeasure(path, false);
+            seg.reset();
+            pm.getSegment(0, pm.getLength() * Math.min(1f, shown), seg, true);
+            glow.setAlpha((int) (255 * 0.85f * pulse));
+            cv.drawPath(seg, glow);
+            cv.drawPath(seg, line);
+        }
     }
 
     /** Swipe-to-confirm slider: drag the knob to the far end to hide (light track), or to restore while hidden (lime track). */
     void heroButton(final boolean hid) {
         final int bg = BTN_LIGHT, fg = ON_LIGHT;                  // same light track + dark knob for hide and restore
-        final boolean locked = hid && LockService.RESTORING.get();          // restore already running
-        final int knobH = dp(48), knobW = dp(84), pad = dp(4);   // long pill knob inside the pill track
+        final boolean busy = progActive();                       // hiding / locking / restoring right now
+        progShown = busy; ring = null; progLabel = null;
+        final int knobH = dp(48), knobW = dp(84), pad = dp(4), m = dp(10);   // long pill knob inside the pill track; m = room for the glow
+        final FrameLayout wrap = new FrameLayout(this);
+        final GlowRing gr = new GlowRing(this, GREEN, dp(4), dp(6), dp(6));
+        wrap.addView(gr, new FrameLayout.LayoutParams(MATCH, MATCH));
         final FrameLayout track = new FrameLayout(this);
         track.setBackground(rect(bg, 28));
+        FrameLayout.LayoutParams tp = new FrameLayout.LayoutParams(MATCH, MATCH);
+        tp.setMargins(m, m, m, m);
+        wrap.addView(track, tp);
+        LinearLayout.LayoutParams wp = lp(MATCH, dp(56) + 2 * m, 20 - 10);
+        wp.leftMargin = wp.rightMargin = -m;                     // the glow margin must not make the slider narrower
+        root.addView(wrap, wp);
+
+        if (busy) {                                              // the slider becomes the progress bar: glowing border + centre text
+            ring = gr;
+            progLabel = text("", 16, fg, SEMI);
+            progLabel.setGravity(Gravity.CENTER);
+            progLabel.setIncludeFontPadding(false);
+            track.addView(progLabel, new FrameLayout.LayoutParams(MATCH, MATCH));
+            progUpdate();
+            return;
+        }
+
         final String hint = hid ? "Swipe to restore" : "Swipe to hide";
         final TextView label = text(hint, 16, fg, SEMI);
         label.setGravity(Gravity.CENTER);
@@ -819,7 +881,7 @@ public class MainActivity extends Activity {
         final float[] st = {0, 0};                                         // finger x at touch-down, knob offset at touch-down
         final boolean[] passed = {false}, done = {false};
         knob.setOnTouchListener((v, e) -> {
-            if (locked || done[0]) return true;
+            if (done[0]) return true;
             final float max = track.getWidth() - knobW - 2 * pad;
             switch (e.getActionMasked()) {
                 case android.view.MotionEvent.ACTION_DOWN:
@@ -858,8 +920,6 @@ public class MainActivity extends Activity {
             }
             return false;
         });
-        if (locked) track.setAlpha(0.5f);
-        root.addView(track, lp(MATCH, dp(56), 20));
     }
 
     /** What the slider does once it reaches the end. */
