@@ -3,6 +3,8 @@ package com.zorken;
 import android.app.*;
 import android.content.*;
 import android.content.pm.*;
+import android.content.res.Configuration;
+import android.content.res.Resources;
 import android.graphics.*;
 import android.graphics.drawable.*;
 import android.net.Uri;
@@ -24,6 +26,7 @@ public class MainActivity extends Activity {
     static final int BG = 0xFF000000, CARD = 0xFF1C1C1E, CARD2 = 0xFF2C2C2E, TXT = 0xFFF2F2F2, SUB = 0xFF9A9AA0,
             GREEN = 0xFFD2F234 /* lime accent */, GREEN_BG = 0xFF1E3A2A, RED = 0xFFFF6B6B, RED_BG = 0xFF3B1F1F,
             AMBER = 0xFFFFB74D, AMBER_BG = 0xFF3A2E17, LINE = 0xFF262628, BTN_LIGHT = 0xFFEDEDED;
+    static final int ROW_TITLE = 18;                                   // every settings-row title uses this size
     static final int ON_GREEN = 0xFF1A2300, ON_LIGHT = 0xFF101010;     // text colour on a lime / light button
     static final int MATCH = ViewGroup.LayoutParams.MATCH_PARENT, WRAP = ViewGroup.LayoutParams.WRAP_CONTENT;
 
@@ -37,13 +40,14 @@ public class MainActivity extends Activity {
     @Override protected void onCreate(Bundle b) {
         super.onCreate(b);
         sp = getSharedPreferences("zk", 0);
+        rootState = Environment.isExternalStorageManager() ? "ok" : "bad";
+        modState = sp.getString("st_mod", "checking");        // last known answer: no grey "Checking..." flash on every open
         initFonts();
         getWindow().setBackgroundDrawable(new ColorDrawable(BG));
         getWindow().setDecorFitsSystemWindows(false);          // edge to edge: the glow runs under the status bar
         getWindow().setStatusBarColor(Color.TRANSPARENT);
         getWindow().setNavigationBarColor(Color.TRANSPARENT);
         FrameLayout frame = new FrameLayout(this);
-        frame.addView(new Glow(this), new FrameLayout.LayoutParams(MATCH, MATCH));
         sv = new ScrollView(this);
         sv.setFillViewport(true);
         sv.setClipToPadding(false);
@@ -71,20 +75,6 @@ public class MainActivity extends Activity {
         REG = Typeface.create(base, 400, false);
         MED = Typeface.create(base, 500, false);
         SEMI = Typeface.create(base, 600, false);
-    }
-
-    /** Lime quarter-circle glow in the top-right corner (static, behind the scrolling content). */
-    static class Glow extends View {
-        final Paint p = new Paint(Paint.ANTI_ALIAS_FLAG);
-        Glow(Context c) { super(c); }
-        @Override protected void onDraw(Canvas cv) {
-            float w = getWidth();
-            float cx = w * 1.04f, cy = -w * 0.07f, r = w * 0.34f / 0.865f;
-            p.setShader(new RadialGradient(cx, cy, r,
-                new int[]{0xFF000000, 0xFF080C00, 0xFF3B5004, 0xFFD2F234, 0x40D2F234, 0x00D2F234},
-                new float[]{0f, 0.60f, 0.82f, 0.865f, 0.91f, 1f}, Shader.TileMode.CLAMP));
-            cv.drawCircle(cx, cy, r, p);
-        }
     }
 
     // ---------- small UI helpers ----------
@@ -518,7 +508,8 @@ public class MainActivity extends Activity {
                 sp.edit().putString("hash", Common.sha(p)).apply();
                 pin = p; checked = false; main(); backgroundSync();
             } else if (mode == LOCAL) {
-                if (!Common.sha(p).equals(sp.getString("hash", ""))) { wrong.run(); setErr(err, "Wrong PIN"); return; }
+                if (!Common.sha(p).equals(sp.getString("hash", ""))) { AppLog.add(this, "app", "wrong PIN entered in the app"); wrong.run(); setErr(err, "Wrong PIN"); return; }
+                AppLog.add(this, "app", "unlocked");
                 pin = p; checked = false; main(); backgroundSync();
             } else {
                 busy[0] = true; title.setText("Restoring\u2026");
@@ -633,42 +624,51 @@ public class MainActivity extends Activity {
         root.addView(t);
     }
 
+    static final String REPO = "https://github.com/syedtahseen/zorken", CONTACT_MAIL = "itxtahseen@gmail.com";
+
+    /** Three-dot menu in the app's own style (dark rounded card instead of Android's default popup). */
     void menu(View anchor) {
-        PopupMenu m = new PopupMenu(this, anchor);
-        m.getMenu().add(0, 1, 0, "Re-check status");
-        m.getMenu().add(0, 2, 1, "Change PIN");
-        m.setOnMenuItemClickListener(it -> {
-            click();
-            if (it.getItemId() == 1) { rootState = "checking"; modState = "checking"; checked = false; main(); }
-            else changePin();
-            return true;
-        });
-        m.show();
+        final int w = dp(210);
+        LinearLayout c = vcol();
+        c.setBackground(outline(CARD, 0xFF2C2C2E, 16));
+        c.setPadding(dp(6), dp(6), dp(6), dp(6));
+        final PopupWindow pw = new PopupWindow(c, w, WRAP, true);
+        pw.setBackgroundDrawable(new ColorDrawable(Color.TRANSPARENT));
+        pw.setElevation(dp(12));
+        menuItem(c, pw, "Re-check status", () -> { rootState = "checking"; modState = "checking"; checked = false; main(); });
+        menuItem(c, pw, "Bug report", () -> openLink(new Intent(Intent.ACTION_VIEW, Uri.parse(REPO + "/issues/new?title=" + Uri.encode("Bug: ")
+            + "&body=" + Uri.encode("Android " + android.os.Build.VERSION.RELEASE + " / " + android.os.Build.MANUFACTURER + " " + android.os.Build.MODEL
+                + "\n\nWhat happened:\n"))), "No app found to open the link"));
+        menuItem(c, pw, "Contact", () -> openLink(new Intent(Intent.ACTION_SENDTO, Uri.parse("mailto:" + CONTACT_MAIL))
+            .putExtra(Intent.EXTRA_SUBJECT, "Zorken"), "No email app found"));
+        pw.showAsDropDown(anchor, anchor.getWidth() - w, 0);
+    }
+
+    void menuItem(LinearLayout c, final PopupWindow pw, String label, final Runnable action) {
+        TextView t = text(label, 16, TXT, MED);
+        t.setPadding(dp(14), dp(13), dp(14), dp(13));
+        t.setBackground(ripple(Color.TRANSPARENT, 12, TXT));
+        t.setOnClickListener(v -> { click(); pw.dismiss(); action.run(); });
+        c.addView(t, new LinearLayout.LayoutParams(MATCH, WRAP));
+    }
+
+    void openLink(Intent i, String err) {
+        try { startActivity(i); } catch (Throwable t) { errorToast(err); }
     }
 
     void statusCard() {
         boolean r = "ok".equals(rootState), m = "ok".equals(modState);
         boolean busy = "checking".equals(rootState) || "checking".equals(modState);
         boolean good = r && m;
+        if (busy) { checkingCard(); return; }
+        if (!good) { attentionCard(r, m); return; }
         int ac = busy ? SUB : good ? GREEN : RED;
         LinearLayout c = vcol();
         c.setBackground(busy ? grad(0xFF232325, 0xFF161618, CARD2, 24)
             : good ? grad(0xFF4A5A0F, 0xFF1D2407, 0x55D2F234, 24)
             : grad(0xFF5C1D1D, 0xFF2A0E0E, 0x66FF6B6B, 24));
-        c.setPadding(dp(24), dp(20), dp(76), dp(20));     // right padding keeps text clear of the big badge
-        // The badge is a large decoration in the bottom-right corner that the card's rounded edge cuts off.
-        FrameLayout holder = new FrameLayout(this);
-        final int cardR = dp(24);
-        holder.setOutlineProvider(new ViewOutlineProvider() {
-            @Override public void getOutline(View v, Outline o) { o.setRoundRect(0, 0, v.getWidth(), v.getHeight(), cardR); }
-        });
-        holder.setClipToOutline(true);
-        holder.addView(c, new FrameLayout.LayoutParams(MATCH, WRAP));
-        StatusArt art = new StatusArt(this, ac, busy ? 2 : good ? 0 : 1);
-        FrameLayout.LayoutParams ap = new FrameLayout.LayoutParams(dp(88), dp(88), Gravity.BOTTOM | Gravity.END);
-        ap.rightMargin = -dp(20); ap.bottomMargin = -dp(24);
-        holder.addView(art, ap);
-        root.addView(holder, lp(MATCH, WRAP, 28));
+        c.setPadding(dp(24), dp(20), dp(20), dp(20));
+        root.addView(c, lp(MATCH, WRAP, 28));
         LinearLayout top = hrow();
         c.addView(top, new LinearLayout.LayoutParams(MATCH, WRAP));
         LinearLayout left = vcol();
@@ -678,6 +678,19 @@ public class MainActivity extends Activity {
             good ? 0xFFC9D0AE : SUB, false);
         sub.setPadding(0, dp(2), 0, 0);
         left.addView(sub);
+        FrameLayout badge = new FrameLayout(this);
+        GradientDrawable g = new GradientDrawable();
+        g.setShape(GradientDrawable.OVAL); g.setColor(Color.TRANSPARENT); g.setStroke(dp(3), ac);
+        badge.setBackground(g);
+        if (good) {
+            ImageView ck = ico(R.drawable.ic_check, 24, ac);
+            badge.addView(ck, new FrameLayout.LayoutParams(dp(24), dp(24), Gravity.CENTER));
+        } else {
+            TextView sym = text(busy ? "…" : "!", 24, ac, true);
+            sym.setGravity(Gravity.CENTER);
+            badge.addView(sym, new FrameLayout.LayoutParams(MATCH, MATCH));
+        }
+        top.addView(badge, new LinearLayout.LayoutParams(dp(46), dp(46)));
         statusLine(c, "LSPosed module", modState, "Active", "old".equals(modState)
             ? "Running an older version. Reboot so the updated module loads (needed for PIN change and restoring settings)."
             : "Not responding. Enable it in LSPosed (scope: System Framework), then reboot.");
@@ -698,6 +711,63 @@ public class MainActivity extends Activity {
         }
     }
 
+    /** "Attention !": same card as the settings panels (dark fill, rounded outline) with a red border; issues are split by the app's usual separator. */
+    void attentionCard(boolean storageOk, boolean moduleOk) {
+        LinearLayout c = vcol();
+        c.setBackground(outline(0x1FFF6B6B, 0x4DFF6B6B, 20));     // light red tint, soft red border
+        c.setPadding(dp(18), dp(16), dp(18), dp(16));
+        root.addView(c, lp(MATCH, WRAP, 28));
+        c.addView(text("Attention !", 26, TXT, true));
+
+        boolean first = true;
+        if (!moduleOk) { issue(c, "LSPosed module", "old".equals(modState)
+            ? "Running an older version. Reboot so the updated module loads (needed for PIN change and restoring settings)."
+            : "Not responding. Enable it in LSPosed (scope: System Framework), then reboot.", null); first = false; }
+        if (!storageOk) {
+            if (!first) divider(c);
+            issue(c, "Storage access", "Not granted. Allow \"All files access\" so folders can be hidden.",
+                v -> startActivity(new Intent(android.provider.Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION,
+                    Uri.parse("package:" + getPackageName()))));
+        }
+        c.addView(pill("Re-check", 0xFF1E1E20, TXT, v -> { rootState = "checking"; modState = "checking"; checked = false; main(); }),
+            lp(MATCH, dp(46), 14));
+    }
+
+    /** "Checking...": the same dark card as the settings panels, title only. */
+    void checkingCard() {
+        LinearLayout c = vcol();
+        c.setBackground(outline(0xFF111113, 0xFF3A3A3C, 20));
+        c.setPadding(dp(18), dp(16), dp(18), dp(16));
+        root.addView(c, lp(MATCH, WRAP, 28));
+        c.addView(text("Checking\u2026", 26, TXT, true));
+    }
+
+    void divider(LinearLayout c) {
+        View d = new View(this);
+        d.setBackgroundColor(LINE);
+        c.addView(d, new LinearLayout.LayoutParams(MATCH, dp(1)));
+    }
+
+    /** One problem: title + explanation; with a fix action the whole row is tappable and ends in a chevron (like the home rows). */
+    void issue(LinearLayout c, String title, String desc, View.OnClickListener fix) {
+        LinearLayout r = hrow();
+        r.setPadding(0, dp(14), 0, dp(14));
+        LinearLayout col = vcol();
+        col.addView(text(title, 16, TXT, true));
+        TextView d = text(desc, 13, SUB, false);
+        d.setPadding(0, dp(3), 0, 0);
+        col.addView(d);
+        LinearLayout.LayoutParams cp = new LinearLayout.LayoutParams(0, WRAP, 1f);
+        if (fix != null) cp.rightMargin = dp(12);
+        r.addView(col, cp);
+        if (fix != null) {
+            r.addView(ico(R.drawable.ic_chevron, 22, TXT));
+            r.setBackground(plainRipple());
+            r.setOnClickListener(h(fix));
+        }
+        c.addView(r, new LinearLayout.LayoutParams(MATCH, WRAP));
+    }
+
     void statusLine(LinearLayout c, String name, String st, String okTxt, String badTxt) {
         boolean ok = "ok".equals(st), busy = "checking".equals(st);
         if (ok) return;   // only show items that need attention
@@ -716,7 +786,7 @@ public class MainActivity extends Activity {
         boolean active = progActive();
         if (!active && sp.getBoolean("restore_fail", false)) {
             sp.edit().remove("restore_fail").apply();
-            errorToast("Some items could not be restored. See the log.");
+            errorToast("Some items could not be restored. See Logs.");
         }
         if (active != progShown || (!active && sp.getBoolean("hidden", false) != wasHidden)) { wasHidden = sp.getBoolean("hidden", false); refresh(); }             // bar appears / disappears: rebuild the screen once
         else if (active) progUpdate();
@@ -754,40 +824,6 @@ public class MainActivity extends Activity {
     }
 
     /** Glowing progress ring that runs clockwise around the slider's outline, starting at the top centre. */
-    /** Big ring with a check (mode 0), "!" (1) or "…" (2). Sized to overflow the card's bottom-right corner. */
-    static class StatusArt extends View {
-        final Paint ring = new Paint(Paint.ANTI_ALIAS_FLAG), mark = new Paint(Paint.ANTI_ALIAS_FLAG);
-        final int mode;
-        StatusArt(Context c, int color, int mode) {
-            super(c);
-            this.mode = mode;
-            ring.setStyle(Paint.Style.STROKE); ring.setColor(color);
-            mark.setStyle(Paint.Style.STROKE); mark.setColor(color);
-            mark.setStrokeCap(Paint.Cap.ROUND); mark.setStrokeJoin(Paint.Join.ROUND);
-            setImportantForAccessibility(IMPORTANT_FOR_ACCESSIBILITY_NO);
-        }
-        @Override protected void onDraw(Canvas cv) {
-            float R = Math.min(getWidth(), getHeight()) / 2f;           // outer radius
-            float cx = getWidth() / 2f, cy = getHeight() / 2f;
-            float rs = R * 0.16f;                                       // ring stroke
-            ring.setStrokeWidth(rs);
-            cv.drawCircle(cx, cy, R - rs / 2f, ring);
-            mark.setStrokeWidth(R * 0.26f);
-            if (mode == 0) {                                            // check, proportions taken from the reference card
-                Path p = new Path();
-                p.moveTo(cx - 0.54f * R, cy + 0.10f * R);
-                p.lineTo(cx - 0.22f * R, cy + 0.38f * R);
-                p.lineTo(cx + 0.54f * R, cy - 0.35f * R);
-                cv.drawPath(p, mark);
-            } else if (mode == 1) {                                     // !
-                cv.drawLine(cx, cy - 0.45f * R, cx, cy + 0.08f * R, mark);
-                cv.drawPoint(cx, cy + 0.42f * R, mark);
-            } else {                                                    // …
-                for (int i = -1; i <= 1; i++) cv.drawPoint(cx + i * 0.38f * R, cy, mark);
-            }
-        }
-    }
-
     static class GlowRing extends View {
         final Paint base = new Paint(Paint.ANTI_ALIAS_FLAG), glow = new Paint(Paint.ANTI_ALIAS_FLAG), line = new Paint(Paint.ANTI_ALIAS_FLAG);
         final Path path = new Path(), seg = new Path();
@@ -958,6 +994,7 @@ public class MainActivity extends Activity {
     /** What the slider does once it reaches the end. */
     void runHeroAction(boolean hid) {
         lastBusy = System.currentTimeMillis();            // show the progress card right away
+        AppLog.add(this, "app", hid ? "restore started from the app" : "hide started from the app");
         if (hid) {
             send("restore");
             // The service keeps going when the app is left; "hidden" is cleared by it when the restore is done.
@@ -965,7 +1002,7 @@ public class MainActivity extends Activity {
                 sp.edit().putBoolean("hidden", false).apply();
                 new Thread(() -> {
                     if (Shell.hasProblems(Shell.restoreSync(MainActivity.this, pin)))
-                        runOnUiThread(() -> errorToast("Some items could not be restored. See the log."));
+                        runOnUiThread(() -> errorToast("Some items could not be restored. See Logs."));
                 }).start();
             }
             toast("Restoring...");
@@ -981,11 +1018,19 @@ public class MainActivity extends Activity {
     void settingsList() {
         Set<String> apps = set("apps");
         root.addView(new View(this), new LinearLayout.LayoutParams(MATCH, dp(14)));
-        accordion("apps", R.drawable.ic_apps, "Apps to hide", apps.isEmpty() ? "None selected" : apps.size() + " selected", 18, appsBody());
-        accordion("files", R.drawable.ic_folder, "Folders & files", filesSummary(), 18, filesBody());
-        row(R.drawable.ic_lock, "Wrong attempts before hiding", null, 15, false, null, stepper());
-        row(R.drawable.ic_key, "PIN", null, 18, false, null, outlineBtn("Change PIN", v -> changePin()));
-        accordion("log", R.drawable.ic_doc, "View last file-hiding log", null, 16, logBody());
+        accordion("apps", R.drawable.ic_apps, "Apps to hide", apps.isEmpty() ? "None selected" : apps.size() + " selected", ROW_TITLE, appsBody());
+        accordion("files", R.drawable.ic_folder, "Folders & files", filesSummary(), ROW_TITLE, filesBody());
+        row(R.drawable.ic_lock, "Wrong attempts", "Before hiding", ROW_TITLE, false, null, attemptsStepper());
+        row(R.drawable.ic_key, "PIN", null, ROW_TITLE, false, null, outlineBtn("Change PIN", v -> changePin()));
+        iconRow();
+        displaySizeRow();
+        accordion("log", R.drawable.ic_doc, "Logs", "Newest first", ROW_TITLE, logBody());
+        row(R.drawable.ic_lock_pin, "About Zorken", "Zorken is an LSPosed module and app that protects your privacy. After a set number of wrong unlock attempts it hides your chosen apps "
+            + "and moves your chosen folders and files into an encrypted vault. Only your secret PIN inside this app can bring them back.",
+            ROW_TITLE, true, v -> {
+                try { startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse("https://github.com/syedtahseen/zorken"))); }
+                catch (Throwable t) { errorToast("No app found to open the link"); }
+            }, null);
     }
 
     // ---- accordion rows: tap the row (or its chevron) to expand / collapse the panel under it ----
@@ -1120,6 +1165,7 @@ public class MainActivity extends Activity {
                 if (sp.getBoolean("hidden", false)) { setErr(err, "Restore first, then edit the list"); return; }
                 Set<String> s2 = set("paths"); s2.remove(path);
                 sp.edit().putStringSet("paths", s2).apply(); send("config");
+                AppLog.add(this, "settings", "folder/file removed: " + path);
                 main();
             });
             r.addView(x);
@@ -1140,20 +1186,99 @@ public class MainActivity extends Activity {
         return p;
     }
 
-    /** The last file-hiding log, in place, with a Copy button. */
+    /** Everything the app logged (hide / lock / restore, module answers, settings, crashes), newest first, with Refresh / Copy / Clear. */
     View logBody() {
         LinearLayout p = panel();
-        final String log = sp.getString("log", "Nothing yet. Swipe to hide first.");
-        TextView lt = text(log, 12, SUB, false);
+        final TextView lt = text("", 12, SUB, false);
         lt.setTextIsSelectable(true);
+        showLog(lt);
         ScrollView box = scroller(lt);
         box.setOnTouchListener((v, e) -> { v.getParent().requestDisallowInterceptTouchEvent(true); return false; });
         p.addView(box);
-        p.addView(pill("Copy", 0xFF1E1E20, TXT, v -> {
-            ((ClipboardManager) getSystemService(Context.CLIPBOARD_SERVICE)).setPrimaryClip(ClipData.newPlainText("Zorken log", log));
-            toast("Log copied");
-        }), lp(MATCH, dp(46), 12));
+        LinearLayout btns = hrow();
+        Button b1 = pill("Refresh", 0xFF1E1E20, TXT, v -> { showLog(lt); toast("Logs refreshed"); });
+        Button b2 = pill("Copy", 0xFF1E1E20, TXT, v -> {
+            ((ClipboardManager) getSystemService(Context.CLIPBOARD_SERVICE)).setPrimaryClip(ClipData.newPlainText("Zorken logs", lt.getText()));
+            toast("Logs copied");
+        });
+        Button b3 = pill("Clear", 0xFF1E1E20, RED, v -> { AppLog.clear(this); showLog(lt); toast("Logs cleared"); });
+        for (Button b : new Button[]{b1, b2, b3}) {
+            LinearLayout.LayoutParams bl = new LinearLayout.LayoutParams(0, MATCH, 1f);
+            bl.leftMargin = dp(3); bl.rightMargin = dp(3);
+            btns.addView(b, bl);
+        }
+        p.addView(btns, lp(MATCH, dp(46), 12));
         return p;
+    }
+
+    /** Fills the log view with the newest lines first (every line carries its own time stamp, so reversing is safe). */
+    void showLog(TextView lt) {
+        String all = AppLog.read(this);
+        if (all.isEmpty()) { lt.setText("Nothing logged yet."); return; }
+        String[] lines = all.split("\n");
+        StringBuilder sb = new StringBuilder();
+        for (int i = lines.length - 1; i >= 0 && sb.length() < 60000; i--) sb.append(lines[i]).append('\n');
+        lt.setText(sb.toString().trim());
+    }
+
+    // ---- app icon: hide / show the launcher icon ----
+    static final String ICON_ALIAS = "com.zorken.LauncherAlias";
+
+    boolean iconHidden() {
+        try {
+            return getPackageManager().getComponentEnabledSetting(new ComponentName(this, ICON_ALIAS))
+                == PackageManager.COMPONENT_ENABLED_STATE_DISABLED;
+        } catch (Throwable t) { return false; }
+    }
+
+    boolean setIconHidden(boolean hide) {
+        try {
+            getPackageManager().setComponentEnabledSetting(new ComponentName(this, ICON_ALIAS),
+                hide ? PackageManager.COMPONENT_ENABLED_STATE_DISABLED : PackageManager.COMPONENT_ENABLED_STATE_ENABLED,
+                PackageManager.DONT_KILL_APP);
+            AppLog.add(this, "icon", hide ? "launcher icon hidden" : "launcher icon shown");
+            return true;
+        } catch (Throwable t) {
+            AppLog.add(this, "icon", "FAILED to " + (hide ? "hide" : "show") + " launcher icon: " + t);
+            errorToast("Could not change the icon. See Logs.");
+            return false;
+        }
+    }
+
+    void iconRow() {
+        final LinearLayout p = hrow();
+        p.setBackground(outline(0xFF111113, 0xFF3A3A3C, 22));
+        p.setPadding(dp(4), dp(4), dp(4), dp(4));
+        final TextView off = text("Off", 15, SUB, MED), on = text("On", 15, SUB, MED);
+        final Runnable paint = () -> {
+            boolean h = iconHidden();
+            segPaint(off, !h); segPaint(on, h);
+        };
+        paint.run();
+        off.setOnClickListener(v -> {
+            if (!iconHidden()) return;
+            click();
+            setIconHidden(false);
+            paint.run();
+        });
+        on.setOnClickListener(v -> {
+            if (iconHidden()) return;
+            click();
+            setIconHidden(true);
+            paint.run();
+        });
+        for (TextView t : new TextView[]{off, on}) {
+            t.setGravity(Gravity.CENTER);
+            p.addView(t, new LinearLayout.LayoutParams(dp(48), dp(34)));
+        }
+        p.setLayoutParams(new LinearLayout.LayoutParams(WRAP, dp(42)));
+        row(R.drawable.ic_eye_off, "Hide app icon", "Remove it from the launcher", ROW_TITLE, false, null, p);
+    }
+
+    /** One half of a two-way pill: lime when selected. */
+    void segPaint(TextView t, boolean sel) {
+        t.setTextColor(sel ? ON_GREEN : SUB);
+        t.setBackground(rect(sel ? GREEN : Color.TRANSPARENT, 17));
     }
 
     void row(int iconRes, String title, String sub, int titleSp, boolean chevron, View.OnClickListener click, View trailing) {
@@ -1203,32 +1328,66 @@ public class MainActivity extends Activity {
         return b;
     }
 
-    LinearLayout stepper() {
+    /** Pill with "-  value  +". onStep gets -1 / +1 and returns the text to show. */
+    LinearLayout stepper(String initial, int valueWidthDp, final java.util.function.IntFunction<String> onStep) {
         LinearLayout p = hrow();
         p.setBackground(outline(0xFF111113, 0xFF3A3A3C, 22));
         p.setPadding(dp(4), dp(4), dp(4), dp(4));
-        final TextView val = text(String.valueOf(sp.getInt("th", 2)), 18, TXT, SEMI);
+        final TextView val = text(initial, 18, TXT, SEMI);
         val.setGravity(Gravity.CENTER);
-        p.addView(step("−", -1, val));
-        p.addView(val, new LinearLayout.LayoutParams(dp(34), WRAP));
-        p.addView(step("+", 1, val));
+        p.addView(step("\u2212", -1, val, onStep));
+        p.addView(val, new LinearLayout.LayoutParams(dp(valueWidthDp), WRAP));
+        p.addView(step("+", 1, val, onStep));
         p.setLayoutParams(new LinearLayout.LayoutParams(WRAP, dp(42)));
         return p;
     }
 
-    TextView step(String s, final int d, final TextView val) {
+    TextView step(String s, final int d, final TextView val, final java.util.function.IntFunction<String> onStep) {
         TextView b = text(s, 22, TXT, MED);
         b.setGravity(Gravity.CENTER);
         b.setBackground(new RippleDrawable(android.content.res.ColorStateList.valueOf(0x33FFFFFF), rect(0xFF1E1E20, 17), rect(Color.WHITE, 17)));
-        b.setOnClickListener(v -> {
-            tick();
-            int n = Math.max(1, Math.min(10, sp.getInt("th", 2) + d));
-            sp.edit().putInt("th", n).apply();
-            val.setText(String.valueOf(n));
-            send("config");
-        });
+        b.setOnClickListener(v -> { tick(); val.setText(onStep.apply(d)); });
         b.setLayoutParams(new LinearLayout.LayoutParams(dp(34), dp(34)));
         return b;
+    }
+
+    /** Wrong-attempts limit (1-10). */
+    LinearLayout attemptsStepper() {
+        return stepper(String.valueOf(sp.getInt("th", 2)), 34, d -> {
+            int n = Math.max(1, Math.min(10, sp.getInt("th", 2) + d));
+            sp.edit().putInt("th", n).apply();
+            AppLog.add(MainActivity.this, "settings", "wrong attempts before hiding: " + n);
+            send("config");
+            return String.valueOf(n);
+        });
+    }
+
+    // ---- display size: scales the whole app UI (dp and text), not the phone's own setting ----
+    static final int SCALE_MIN = 70, SCALE_MAX = 140, SCALE_STEP = 10;
+
+    static Configuration scaledConfig(Context base, int pct) {
+        Configuration c = new Configuration(base.getResources().getConfiguration());
+        c.densityDpi = Resources.getSystem().getConfiguration().densityDpi * pct / 100;
+        return c;
+    }
+
+    @Override protected void attachBaseContext(Context base) {
+        int pct = base.getSharedPreferences("zk", 0).getInt("ui_scale", 100);
+        if (pct != 100) base = base.createConfigurationContext(scaledConfig(base, pct));
+        super.attachBaseContext(base);
+    }
+
+    void displaySizeRow() {
+        row(R.drawable.ic_eye, "Display size", "Interface scale", ROW_TITLE, false, null,
+            stepper(sp.getInt("ui_scale", 100) + "%", 52, d -> {
+                int n = Math.max(SCALE_MIN, Math.min(SCALE_MAX, sp.getInt("ui_scale", 100) + d * SCALE_STEP));
+                if (n == sp.getInt("ui_scale", 100)) return n + "%";
+                sp.edit().putInt("ui_scale", n).apply();
+                AppLog.add(MainActivity.this, "settings", "display size: " + n + "%");
+                getResources().updateConfiguration(scaledConfig(MainActivity.this, n), getResources().getDisplayMetrics());
+                main();                                   // every view size is computed from dp, so rebuild the screen
+                return n + "%";
+            }));
     }
 
     void changePin() {
@@ -1253,6 +1412,7 @@ public class MainActivity extends Activity {
                 final int r = call("chpin", o, Common.sha(n));
                 if (r == 1) Shell.rewrapPin(MainActivity.this, o, n);   // lock key follows the new PIN
                 runOnUiThread(() -> {
+                    AppLog.add(this, "pin", r == 1 ? "PIN changed" : r == 0 ? "PIN change refused: module remembers a different PIN" : "PIN change failed: module did not answer");
                     if (r == 1) {
                         sp.edit().putString("hash", Common.sha(n)).apply();
                         pin = n; d.dismiss(); toast("PIN changed");
@@ -1267,13 +1427,16 @@ public class MainActivity extends Activity {
     }
 
     // ---------- status checks ----------
+    /** Re-checks silently: the card keeps showing the last known state and the screen is only rebuilt if something changed. */
     void checkStatus() {
-        modState = "checking";
+        final String r0 = rootState, m0 = modState;
         rootState = Environment.isExternalStorageManager() ? "ok" : "bad";   // storage access (no root needed)
         new Thread(() -> {
             boolean ok = pingModule();
             modState = ok ? (sp.getInt("modver", 0) >= Common.MODULE_VER ? "ok" : "old") : "bad";
-            runOnUiThread(this::refresh);
+            sp.edit().putString("st_mod", modState).apply();
+            AppLog.add(this, "status", "module: " + modState + ", storage access: " + rootState);
+            runOnUiThread(() -> { if (!rootState.equals(r0) || !modState.equals(m0)) refresh(); });
         }).start();
     }
 
@@ -1284,7 +1447,7 @@ public class MainActivity extends Activity {
     @Override protected void onResume() {
         super.onResume();
         ticker.removeCallbacks(tick); ticker.postDelayed(tick, 500);
-        rootState = "checking"; modState = "checking"; checked = false;
+        checked = false;
         if (pin != null) main();
         if (android.os.Build.VERSION.SDK_INT >= 33 && checkSelfPermission("android.permission.POST_NOTIFICATIONS") != android.content.pm.PackageManager.PERMISSION_GRANTED)
             requestPermissions(new String[]{"android.permission.POST_NOTIFICATIONS"}, 77);   // shows locking progress
@@ -1297,9 +1460,10 @@ public class MainActivity extends Activity {
         if (res != RESULT_OK || data == null || data.getData() == null) return;
         String path = toPath(data.getData(), req == 1);
         if (path == null) { errorToast("Can't use that location (pick from internal storage / SD card)"); return; }
-        if (Shell.resolve(path) == null) { errorToast("That folder is protected (Android, DCIM, Download...). Pick a subfolder."); return; }
+        if (Shell.resolve(path) == null) { errorToast("Can't hide the Android folder, the storage root or Zorken's own vault"); return; }
         Set<String> s = set("paths"); s.add(path);
         sp.edit().putStringSet("paths", s).apply();
+        AppLog.add(this, "settings", "folder/file added: " + path);
         send("config");
         if (pin != null) main();
     }
@@ -1348,16 +1512,23 @@ public class MainActivity extends Activity {
         final boolean[] on = new boolean[apps.size()];
         for (int i = 0; i < names.length; i++) { names[i] = apps.get(i)[0]; on[i] = sel.contains(apps.get(i)[1]); }
         LinearLayout list = vcol();
+        final View[] rows = new View[apps.size()];
         for (int i = 0; i < apps.size(); i++) {
             final int idx = i;
             LinearLayout r = hrow();
+            rows[i] = r;
             r.setPadding(0, dp(8), 0, dp(8));
             ImageView iv = new ImageView(this);
             iv.setImageDrawable(icon(apps.get(i)[1]));
             LinearLayout.LayoutParams ip = new LinearLayout.LayoutParams(dp(36), dp(36));
             ip.rightMargin = dp(14);
             r.addView(iv, ip);
-            r.addView(text(apps.get(i)[0], 15, TXT, false), new LinearLayout.LayoutParams(0, WRAP, 1f));
+            LinearLayout names2 = vcol();
+            names2.addView(text(apps.get(i)[0], 15, TXT, false));
+            TextView pk = text(apps.get(i)[1], 11, SUB, false);
+            pk.setPadding(0, dp(1), 0, 0);
+            names2.addView(pk);
+            r.addView(names2, new LinearLayout.LayoutParams(0, WRAP, 1f));
             final CheckBox cb = new CheckBox(this);
             cb.setChecked(on[i]);
             cb.setButtonTintList(android.content.res.ColorStateList.valueOf(GREEN));
@@ -1366,11 +1537,32 @@ public class MainActivity extends Activity {
             r.setOnClickListener(v -> { click(); cb.toggle(); });
             list.addView(r);
         }
-        sheet("Apps to hide", null, scroller(list), "OK", (d, ok) -> {
+        final EditText search = new EditText(this);
+        search.setHint("Search apps");
+        search.setHintTextColor(SUB); search.setTextColor(TXT); search.setTextSize(15); search.setTypeface(MED);
+        search.setSingleLine(true);
+        search.setBackground(outline(0xFF111113, 0xFF3A3A3C, 22));
+        search.setPadding(dp(16), 0, dp(16), 0);
+        search.addTextChangedListener(new android.text.TextWatcher() {
+            public void beforeTextChanged(CharSequence c, int a, int b, int n) {}
+            public void onTextChanged(CharSequence c, int a, int b, int n) {}
+            public void afterTextChanged(android.text.Editable e) {
+                String q = e.toString().trim().toLowerCase(Locale.ROOT);
+                for (int i = 0; i < rows.length; i++)
+                    rows[i].setVisibility(q.isEmpty() || apps.get(i)[0].toLowerCase(Locale.ROOT).contains(q)
+                        || apps.get(i)[1].toLowerCase(Locale.ROOT).contains(q) ? View.VISIBLE : View.GONE);
+            }
+        });
+        LinearLayout body = vcol();
+        body.setFocusableInTouchMode(true); body.requestFocus();      // keyboard only opens when the search field is tapped
+        body.addView(search, new LinearLayout.LayoutParams(MATCH, dp(46)));
+        body.addView(scroller(list), lp(MATCH, WRAP, 10));
+        sheet("Apps to hide", null, body, "OK", (d, ok) -> {
             Set<String> s2 = set("apps");            // keeps already-hidden apps that aren't listed right now
             for (String[] a2 : apps) s2.remove(a2[1]);
             for (int i = 0; i < on.length; i++) if (on[i]) s2.add(apps.get(i)[1]);
             sp.edit().putStringSet("apps", s2).apply();
+            AppLog.add(this, "settings", "apps to hide: " + s2.size() + " selected");
             send("config");
             d.dismiss();
             main();
