@@ -465,9 +465,8 @@ public class Shell {
     }
 
     static String save(Context c, String tag, String out) {
-        String log = tag + " @ " + new Date() + "\n" + out;
-        c.getSharedPreferences("zk", 0).edit().putString("log", log).apply();
-        return log;
+        AppLog.add(c, tag, out);
+        return tag + " @ " + new Date() + "\n" + out;
     }
 
     public static String hideSync(Context c) {

@@ -52,8 +52,10 @@ public class Hook implements IXposedHookLoadPackage {
                             int n = fails.incrementAndGet();
                             Properties cf = load();
                             int th = Integer.parseInt(cf.getProperty("threshold", "2"));
+                            final String note = "wrong unlock attempt " + n + " of " + th;
                             if (n >= th && !"1".equals(cf.getProperty("hidden")))
-                                EXEC.execute(new Runnable() { public void run() { hide(false); } });
+                                EXEC.execute(new Runnable() { public void run() { hlog(note + ": hiding"); hide(false); } });
+                            else EXEC.execute(new Runnable() { public void run() { hlog(note); } });
                         }
                     } catch (Throwable t) { XposedBridge.log("ZK: " + t); }
                 }
@@ -139,6 +141,7 @@ public class Hook implements IXposedHookLoadPackage {
                 }
             } else if ("restore".equals(cmd)) {
                 synchronized (HIDE_LOCK) {
+                    hlog("restore: showing apps again");
                     for (String p : nz(c.getProperty("apps")).split(",")) {
                         if (p.isEmpty()) continue;
                         setHidden(p, false);
@@ -148,7 +151,12 @@ public class Hook implements IXposedHookLoadPackage {
                     c.setProperty("hidden", "0"); fails.set(0); lastHide = 0; save(c);
                 }
             }
-        } catch (Throwable t) { XposedBridge.log("ZK cmd: " + t); }
+        } catch (Throwable t) { XposedBridge.log("ZK cmd: " + t); hlog("command error: " + t); }
+    }
+
+    /** Sends one event line to the app's Logs screen. Best effort, never throws. */
+    static void hlog(String msg) {
+        try { send(toApp("com.zorken.LOG").putExtra("msg", msg)); } catch (Throwable ignored) {}
     }
 
     /** An intent addressed only to the Zorken app's receiver (works even when the app is stopped). */
@@ -222,6 +230,7 @@ public class Hook implements IXposedHookLoadPackage {
             if (!force && "1".equals(c.getProperty("hidden"))) return;   // already hidden
             if (now - lastHide < 10000) return;                          // rate limit: ignore hide spam
             lastHide = now;
+            hlog("hiding apps");
             for (String p : nz(c.getProperty("apps")).split(",")) {
                 if (p.isEmpty()) continue;
                 setHidden(p, true);
@@ -240,7 +249,7 @@ public class Hook implements IXposedHookLoadPackage {
     static void setHidden(String pkg, boolean hide) {
         long id = Binder.clearCallingIdentity();
         try {
-            if (hide && isProtected(pkg)) { XposedBridge.log("ZK: skipped protected " + pkg); return; }
+            if (hide && isProtected(pkg)) { XposedBridge.log("ZK: skipped protected " + pkg); hlog("skipped protected app: " + pkg); return; }
             if (hide) {
                 try {
                     ActivityManager am = (ActivityManager) ctx.getSystemService("activity");
@@ -253,7 +262,8 @@ public class Hook implements IXposedHookLoadPackage {
             } catch (Throwable t) {
                 pm.setApplicationEnabledSetting(pkg, hide ? 3 : 0, 0);
             }
-        } catch (Throwable t) { XposedBridge.log("ZK hide " + pkg + ": " + t); }
+            hlog((hide ? "app hidden: " : "app shown: ") + pkg);
+        } catch (Throwable t) { XposedBridge.log("ZK hide " + pkg + ": " + t); hlog("FAILED to " + (hide ? "hide " : "show ") + pkg + ": " + t); }
         finally { Binder.restoreCallingIdentity(id); }
     }
 

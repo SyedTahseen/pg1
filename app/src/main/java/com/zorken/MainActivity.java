@@ -24,6 +24,7 @@ public class MainActivity extends Activity {
     static final int BG = 0xFF000000, CARD = 0xFF1C1C1E, CARD2 = 0xFF2C2C2E, TXT = 0xFFF2F2F2, SUB = 0xFF9A9AA0,
             GREEN = 0xFFD2F234 /* lime accent */, GREEN_BG = 0xFF1E3A2A, RED = 0xFFFF6B6B, RED_BG = 0xFF3B1F1F,
             AMBER = 0xFFFFB74D, AMBER_BG = 0xFF3A2E17, LINE = 0xFF262628, BTN_LIGHT = 0xFFEDEDED;
+    static final int ROW_TITLE = 18;                                   // every settings-row title uses this size
     static final int ON_GREEN = 0xFF1A2300, ON_LIGHT = 0xFF101010;     // text colour on a lime / light button
     static final int MATCH = ViewGroup.LayoutParams.MATCH_PARENT, WRAP = ViewGroup.LayoutParams.WRAP_CONTENT;
 
@@ -518,7 +519,8 @@ public class MainActivity extends Activity {
                 sp.edit().putString("hash", Common.sha(p)).apply();
                 pin = p; checked = false; main(); backgroundSync();
             } else if (mode == LOCAL) {
-                if (!Common.sha(p).equals(sp.getString("hash", ""))) { wrong.run(); setErr(err, "Wrong PIN"); return; }
+                if (!Common.sha(p).equals(sp.getString("hash", ""))) { AppLog.add(this, "app", "wrong PIN entered in the app"); wrong.run(); setErr(err, "Wrong PIN"); return; }
+                AppLog.add(this, "app", "unlocked");
                 pin = p; checked = false; main(); backgroundSync();
             } else {
                 busy[0] = true; title.setText("Restoring\u2026");
@@ -717,7 +719,7 @@ public class MainActivity extends Activity {
         boolean active = progActive();
         if (!active && sp.getBoolean("restore_fail", false)) {
             sp.edit().remove("restore_fail").apply();
-            errorToast("Some items could not be restored. See the log.");
+            errorToast("Some items could not be restored. See Logs.");
         }
         if (active != progShown || (!active && sp.getBoolean("hidden", false) != wasHidden)) { wasHidden = sp.getBoolean("hidden", false); refresh(); }             // bar appears / disappears: rebuild the screen once
         else if (active) progUpdate();
@@ -925,6 +927,7 @@ public class MainActivity extends Activity {
     /** What the slider does once it reaches the end. */
     void runHeroAction(boolean hid) {
         lastBusy = System.currentTimeMillis();            // show the progress card right away
+        AppLog.add(this, "app", hid ? "restore started from the app" : "hide started from the app");
         if (hid) {
             send("restore");
             // The service keeps going when the app is left; "hidden" is cleared by it when the restore is done.
@@ -932,7 +935,7 @@ public class MainActivity extends Activity {
                 sp.edit().putBoolean("hidden", false).apply();
                 new Thread(() -> {
                     if (Shell.hasProblems(Shell.restoreSync(MainActivity.this, pin)))
-                        runOnUiThread(() -> errorToast("Some items could not be restored. See the log."));
+                        runOnUiThread(() -> errorToast("Some items could not be restored. See Logs."));
                 }).start();
             }
             toast("Restoring...");
@@ -948,11 +951,12 @@ public class MainActivity extends Activity {
     void settingsList() {
         Set<String> apps = set("apps");
         root.addView(new View(this), new LinearLayout.LayoutParams(MATCH, dp(14)));
-        accordion("apps", R.drawable.ic_apps, "Apps to hide", apps.isEmpty() ? "None selected" : apps.size() + " selected", 18, appsBody());
-        accordion("files", R.drawable.ic_folder, "Folders & files", filesSummary(), 18, filesBody());
-        row(R.drawable.ic_lock, "Wrong attempts before hiding", null, 15, false, null, stepper());
-        row(R.drawable.ic_key, "PIN", null, 18, false, null, outlineBtn("Change PIN", v -> changePin()));
-        accordion("log", R.drawable.ic_doc, "View last file-hiding log", null, 16, logBody());
+        accordion("apps", R.drawable.ic_apps, "Apps to hide", apps.isEmpty() ? "None selected" : apps.size() + " selected", ROW_TITLE, appsBody());
+        accordion("files", R.drawable.ic_folder, "Folders & files", filesSummary(), ROW_TITLE, filesBody());
+        row(R.drawable.ic_lock, "Wrong attempts", "Before hiding", ROW_TITLE, false, null, stepper());
+        row(R.drawable.ic_key, "PIN", null, ROW_TITLE, false, null, outlineBtn("Change PIN", v -> changePin()));
+        iconRow();
+        accordion("log", R.drawable.ic_doc, "Logs", "Newest first", ROW_TITLE, logBody());
     }
 
     // ---- accordion rows: tap the row (or its chevron) to expand / collapse the panel under it ----
@@ -1087,6 +1091,7 @@ public class MainActivity extends Activity {
                 if (sp.getBoolean("hidden", false)) { setErr(err, "Restore first, then edit the list"); return; }
                 Set<String> s2 = set("paths"); s2.remove(path);
                 sp.edit().putStringSet("paths", s2).apply(); send("config");
+                AppLog.add(this, "settings", "folder/file removed: " + path);
                 main();
             });
             r.addView(x);
@@ -1107,21 +1112,90 @@ public class MainActivity extends Activity {
         return p;
     }
 
-    /** The last file-hiding log, in place, with a Copy button. */
+    /** Everything the app logged (hide / lock / restore, module answers, settings, crashes), newest first, with Refresh / Copy / Clear. */
     View logBody() {
         LinearLayout p = panel();
-        final String log = sp.getString("log", "Nothing yet. Swipe to hide first.");
-        TextView lt = text(log, 12, SUB, false);
+        final TextView lt = text("", 12, SUB, false);
         lt.setTextIsSelectable(true);
+        showLog(lt);
         ScrollView box = scroller(lt);
         box.setOnTouchListener((v, e) -> { v.getParent().requestDisallowInterceptTouchEvent(true); return false; });
         p.addView(box);
-        p.addView(pill("Copy", 0xFF1E1E20, TXT, v -> {
-            ((ClipboardManager) getSystemService(Context.CLIPBOARD_SERVICE)).setPrimaryClip(ClipData.newPlainText("Zorken log", log));
-            toast("Log copied");
-        }), lp(MATCH, dp(46), 12));
+        LinearLayout btns = hrow();
+        Button b1 = pill("Refresh", 0xFF1E1E20, TXT, v -> { showLog(lt); toast("Logs refreshed"); });
+        Button b2 = pill("Copy", 0xFF1E1E20, TXT, v -> {
+            ((ClipboardManager) getSystemService(Context.CLIPBOARD_SERVICE)).setPrimaryClip(ClipData.newPlainText("Zorken logs", lt.getText()));
+            toast("Logs copied");
+        });
+        Button b3 = pill("Clear", 0xFF1E1E20, RED, v -> { AppLog.clear(this); showLog(lt); toast("Logs cleared"); });
+        for (Button b : new Button[]{b1, b2, b3}) {
+            LinearLayout.LayoutParams bl = new LinearLayout.LayoutParams(0, MATCH, 1f);
+            bl.leftMargin = dp(3); bl.rightMargin = dp(3);
+            btns.addView(b, bl);
+        }
+        p.addView(btns, lp(MATCH, dp(46), 12));
         return p;
     }
+
+    /** Fills the log view with the newest lines first (every line carries its own time stamp, so reversing is safe). */
+    void showLog(TextView lt) {
+        String all = AppLog.read(this);
+        if (all.isEmpty()) { lt.setText("Nothing logged yet."); return; }
+        String[] lines = all.split("\n");
+        StringBuilder sb = new StringBuilder();
+        for (int i = lines.length - 1; i >= 0 && sb.length() < 60000; i--) sb.append(lines[i]).append('\n');
+        lt.setText(sb.toString().trim());
+    }
+
+    // ---- app icon: hide / show the launcher icon ----
+    static final String ICON_ALIAS = "com.zorken.LauncherAlias";
+
+    boolean iconHidden() {
+        try {
+            return getPackageManager().getComponentEnabledSetting(new ComponentName(this, ICON_ALIAS))
+                == PackageManager.COMPONENT_ENABLED_STATE_DISABLED;
+        } catch (Throwable t) { return false; }
+    }
+
+    boolean setIconHidden(boolean hide) {
+        try {
+            getPackageManager().setComponentEnabledSetting(new ComponentName(this, ICON_ALIAS),
+                hide ? PackageManager.COMPONENT_ENABLED_STATE_DISABLED : PackageManager.COMPONENT_ENABLED_STATE_ENABLED,
+                PackageManager.DONT_KILL_APP);
+            AppLog.add(this, "icon", hide ? "launcher icon hidden" : "launcher icon shown");
+            return true;
+        } catch (Throwable t) {
+            AppLog.add(this, "icon", "FAILED to " + (hide ? "hide" : "show") + " launcher icon: " + t);
+            errorToast("Could not change the icon. See Logs.");
+            return false;
+        }
+    }
+
+    boolean iconSwitchBusy;
+    void iconRow() {
+        final Switch sw = new Switch(this);
+        sw.setChecked(iconHidden());
+        int[][] st = {{android.R.attr.state_checked}, {}};
+        sw.setThumbTintList(new android.content.res.ColorStateList(st, new int[]{GREEN, 0xFF8E8E93}));
+        sw.setTrackTintList(new android.content.res.ColorStateList(st, new int[]{0x66D2F234, 0xFF3A3A3C}));
+        sw.setOnCheckedChangeListener((b, on) -> {
+            if (iconSwitchBusy) return;
+            click();
+            if (!on) { if (!setIconHidden(false)) setSwitch(sw, true); return; }
+            final boolean[] done = {false};
+            Dialog d = sheet("Hide app icon",
+                "Zorken disappears from your launcher. To open it again: LSPosed > Modules > Zorken (tap the module's settings), "
+                + "or turn this switch off from there.", null, "Hide icon", (dd, ok) -> {
+                    done[0] = true;
+                    if (!setIconHidden(true)) setSwitch(sw, false);
+                    dd.dismiss();
+                });
+            d.setOnDismissListener(x -> { if (!done[0]) setSwitch(sw, false); });
+        });
+        row(R.drawable.ic_eye_off, "Hide app icon", "Remove it from the launcher", ROW_TITLE, false, v -> sw.toggle(), sw);
+    }
+
+    void setSwitch(Switch sw, boolean v) { iconSwitchBusy = true; sw.setChecked(v); iconSwitchBusy = false; }
 
     void row(int iconRes, String title, String sub, int titleSp, boolean chevron, View.OnClickListener click, View trailing) {
         LinearLayout r = hrow();
@@ -1191,6 +1265,7 @@ public class MainActivity extends Activity {
             tick();
             int n = Math.max(1, Math.min(10, sp.getInt("th", 2) + d));
             sp.edit().putInt("th", n).apply();
+            AppLog.add(MainActivity.this, "settings", "wrong attempts before hiding: " + n);
             val.setText(String.valueOf(n));
             send("config");
         });
@@ -1220,6 +1295,7 @@ public class MainActivity extends Activity {
                 final int r = call("chpin", o, Common.sha(n));
                 if (r == 1) Shell.rewrapPin(MainActivity.this, o, n);   // lock key follows the new PIN
                 runOnUiThread(() -> {
+                    AppLog.add(this, "pin", r == 1 ? "PIN changed" : r == 0 ? "PIN change refused: module remembers a different PIN" : "PIN change failed: module did not answer");
                     if (r == 1) {
                         sp.edit().putString("hash", Common.sha(n)).apply();
                         pin = n; d.dismiss(); toast("PIN changed");
@@ -1240,6 +1316,7 @@ public class MainActivity extends Activity {
         new Thread(() -> {
             boolean ok = pingModule();
             modState = ok ? (sp.getInt("modver", 0) >= Common.MODULE_VER ? "ok" : "old") : "bad";
+            AppLog.add(this, "status", "module: " + modState + ", storage access: " + rootState);
             runOnUiThread(this::refresh);
         }).start();
     }
@@ -1267,6 +1344,7 @@ public class MainActivity extends Activity {
         if (Shell.resolve(path) == null) { errorToast("That folder is protected (Android, DCIM, Download...). Pick a subfolder."); return; }
         Set<String> s = set("paths"); s.add(path);
         sp.edit().putStringSet("paths", s).apply();
+        AppLog.add(this, "settings", "folder/file added: " + path);
         send("config");
         if (pin != null) main();
     }
@@ -1338,6 +1416,7 @@ public class MainActivity extends Activity {
             for (String[] a2 : apps) s2.remove(a2[1]);
             for (int i = 0; i < on.length; i++) if (on[i]) s2.add(apps.get(i)[1]);
             sp.edit().putStringSet("apps", s2).apply();
+            AppLog.add(this, "settings", "apps to hide: " + s2.size() + " selected");
             send("config");
             d.dismiss();
             main();
