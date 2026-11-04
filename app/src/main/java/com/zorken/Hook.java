@@ -122,10 +122,7 @@ public class Hook implements IXposedHookLoadPackage {
                 c.setProperty("threshold", String.valueOf(Common.limit(i.getIntExtra("threshold", 2))));
                 String nh = i.getStringExtra("newhash");
                 if (nh != null && nh.matches(Common.HEX64)) c.setProperty("hash", nh);
-                if (c.getProperty("vkey") == null) {
-                    String iv = i.getStringExtra("vkey");
-                    c.setProperty("vkey", iv != null && iv.matches(Common.HEX64) ? iv : Common.randHex(32));
-                }
+                if (c.getProperty("vkey") == null) c.setProperty("vkey", Common.randHex(32));
                 save(c);
                 if (nonce != null) {
                     Intent ack = reply("com.zorken.ACK", nonce, true);

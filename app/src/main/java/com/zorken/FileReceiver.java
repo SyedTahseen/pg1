@@ -40,7 +40,7 @@ public class FileReceiver extends BroadcastReceiver {
         if (!ok) AppLog.add(ctx, "module", "refused a command (wrong PIN or not allowed)");
         SharedPreferences.Editor ed = sp.edit().remove("pendnonce");
         String vk = i.getStringExtra("vkey");
-        if (ok && vk != null && vk.length() >= 32 && sp.getString("vkey", null) == null) ed.putString("vkey", vk);
+        if (ok && vk != null && vk.length() >= 32) ed.putString("vkey", vk);
         if (ok && i.hasExtra("hash")) {
             ed.putString("hash", i.getStringExtra("hash"));
             ed.putStringSet("apps", split(i.getStringExtra("apps"), ","));

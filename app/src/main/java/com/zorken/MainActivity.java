@@ -256,10 +256,6 @@ public class MainActivity extends Activity {
     interface SheetAction { void run(Dialog d, Button ok); }
 
     Dialog sheet(String title, String msg, View body, String posLabel, final SheetAction pos) {
-        return sheet(title, msg, body, posLabel, null, pos);
-    }
-
-    Dialog sheet(String title, String msg, View body, String posLabel, String cancelLabel, final SheetAction pos) {
         final Dialog d = new Dialog(this);
         d.requestWindowFeature(Window.FEATURE_NO_TITLE);
         LinearLayout c = vcol();
@@ -273,7 +269,7 @@ public class MainActivity extends Activity {
         if (body != null) {
             c.addView(body, lp(MATCH, WRAP, 14));
         }
-        Button cancel = pill(cancelLabel != null ? cancelLabel : pos == null ? "Close" : "Cancel", CARD2, TXT, v -> d.dismiss());
+        Button cancel = pill(pos == null ? "Close" : "Cancel", CARD2, TXT, v -> d.dismiss());
         LinearLayout row;
         if (pos == null) row = buttonRow(cancel);
         else {
@@ -297,7 +293,18 @@ public class MainActivity extends Activity {
             @Override protected void onMeasure(int w, int h) {
                 super.onMeasure(w, View.MeasureSpec.makeMeasureSpec(max, View.MeasureSpec.AT_MOST));
             }
+            // Keep the outer page scroller from stealing vertical drags while this box can still scroll.
+            @Override public boolean dispatchTouchEvent(MotionEvent e) {
+                int a = e.getActionMasked();
+                if (a == MotionEvent.ACTION_DOWN || a == MotionEvent.ACTION_MOVE) {
+                    boolean can = canScrollVertically(-1) || canScrollVertically(1);
+                    if (getParent() != null) getParent().requestDisallowInterceptTouchEvent(can);
+                }
+                return super.dispatchTouchEvent(e);
+            }
         };
+        v.setNestedScrollingEnabled(true);
+        v.setOverScrollMode(View.OVER_SCROLL_NEVER);
         v.addView(content);
         return v;
     }
@@ -325,7 +332,6 @@ public class MainActivity extends Activity {
             : "The running module is an older version.\nReboot your phone so the updated module loads. Your PIN and settings will then be restored here.");
         root.addView(pill("Try again", GREEN, ON_GREEN, v -> gate()), lp(MATCH, dp(52), 32));
         root.addView(pill("Set up as new", CARD2, TXT, v -> pinScreen(NEW)), lp(MATCH, dp(52), 12));
-        root.addView(pill("Use recovery key", CARD2, TXT, v -> recoverDialog()), lp(MATCH, dp(52), 12));
     }
 
     void screenHeader(String subtitle) {
@@ -469,14 +475,6 @@ public class MainActivity extends Activity {
         last.addView(keyCell(back), new LinearLayout.LayoutParams(0, WRAP, 1f));
         pad.addView(last, lp(MATCH, WRAP, 14));
         root.addView(pad, lp(MATCH, WRAP, 6));
-        if (mode != NEW) {
-            TextView rk = text("Forgot PIN? Use recovery key", 14, SUB, MED);
-            rk.setGravity(Gravity.CENTER);
-            rk.setPadding(dp(16), dp(12), dp(16), dp(12));
-            rk.setBackground(plainRipple());
-            rk.setOnClickListener(h(v -> recoverDialog()));
-            root.addView(rk, lp(WRAP, WRAP, 10));
-        }
 
         root.addView(new View(this), new LinearLayout.LayoutParams(MATCH, dp(24), 1f));
 
@@ -529,11 +527,7 @@ public class MainActivity extends Activity {
         new Thread(() -> {
             int r = call("config", p, sp.getString("hash", null));
             if (r == 0) runOnUiThread(this::mismatchDialog);
-            else if (r == 1) {
-                Shell.ensureBundle(this, p);
-                EncryptJob.schedule(this);
-                if (!Shell.hasRecovery(this) && !sp.getBoolean("rk_asked", false)) runOnUiThread(() -> showRecoveryKey(true));
-            }
+            else if (r == 1) { Shell.ensureBundle(this, p); EncryptJob.schedule(this); }
         }).start();
     }
 
@@ -969,7 +963,6 @@ public class MainActivity extends Activity {
         accordion("files", R.drawable.ic_folder, "Folders & files", filesSummary(), filesBody());
         row(R.drawable.ic_lock, "Wrong attempts", "Before hiding", null, attemptsStepper());
         row(R.drawable.ic_key, "PIN", null, null, outlineBtn("Change PIN", v -> changePin()));
-        recoveryRow();
         iconRow();
         displaySizeRow();
         accordion("log", R.drawable.ic_doc, "Logs", "Newest first", logBody());
@@ -1126,10 +1119,8 @@ public class MainActivity extends Activity {
     View logBody() {
         LinearLayout p = panel();
         final TextView lt = text("", 12, SUB, false);
-        lt.setTextIsSelectable(true);
         showLog(lt);
         ScrollView box = scroller(lt);
-        box.setOnTouchListener((v, e) -> { v.getParent().requestDisallowInterceptTouchEvent(true); return false; });
         p.addView(box);
         p.addView(buttonRow(
             pill("Refresh", BTN_DARK, TXT, v -> { showLog(lt); toast("Logs refreshed"); }),
@@ -1275,91 +1266,6 @@ public class MainActivity extends Activity {
                 main();
                 return n + "%";
             }));
-    }
-
-    void recoveryRow() {
-        final boolean has = Shell.hasRecovery(this);
-        row(R.drawable.ic_shield, "Recovery key", "Restores files if you lose your PIN", null,
-            outlineBtn(has ? "New key" : "Create", v -> {
-                if (!has) { showRecoveryKey(false); return; }
-                sheet("Create a new key?", "Your current recovery key will stop working. Save the new one.", null, "Create", (d, ok) -> {
-                    d.dismiss();
-                    showRecoveryKey(false);
-                });
-            }));
-    }
-
-    void showRecoveryKey(final boolean auto) {
-        if (pin == null) return;
-        final String p = pin;
-        new Thread(() -> {
-            try {
-                final String key = Shell.createRecovery(this, p);
-                runOnUiThread(() -> {
-                    if (isFinishing() || isDestroyed()) return;
-                    if (auto) sp.edit().putBoolean("rk_asked", true).apply();
-                    recoveryKeyDialog(key);
-                });
-            } catch (Exception e) {
-                AppLog.add(this, "key", "recovery key failed: " + e);
-                if (!auto) runOnUiThread(() -> errorToast("Could not create the key. See Logs."));
-            }
-        }).start();
-    }
-
-    void recoveryKeyDialog(final String key) {
-        TextView kv = text(key.substring(0, 19) + "\n" + key.substring(20), 22, TXT, true);
-        kv.setTypeface(Typeface.MONOSPACE, Typeface.BOLD);
-        kv.setGravity(Gravity.CENTER);
-        kv.setTextIsSelectable(true);
-        kv.setPadding(dp(14), dp(18), dp(14), dp(18));
-        kv.setBackground(field(R_PANEL));
-        Dialog d = sheet("Your recovery key",
-            "Copy it or write it down and keep it somewhere safe. It is shown only once. With this key you can get your locked files back even if you lose your PIN. Anyone who has it can restore your files, so keep it private.",
-            kv, "Copy key", "Done", (dlg, ok) -> {
-                ((ClipboardManager) getSystemService(Context.CLIPBOARD_SERVICE)).setPrimaryClip(ClipData.newPlainText("Zorken recovery key", key));
-                toast("Key copied");
-            });
-        d.setCanceledOnTouchOutside(false);
-        d.setOnDismissListener(x -> refresh());
-    }
-
-    void recoverDialog() {
-        final EditText e = new EditText(this);
-        e.setHint("Recovery key"); e.setHintTextColor(SUB); e.setTextColor(TXT); e.setTextSize(16);
-        e.setTypeface(Typeface.MONOSPACE);
-        e.setSingleLine(true);
-        e.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_CAP_CHARACTERS | InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS);
-        e.setBackground(outline(CARD2, EDGE, R_PANEL));
-        e.setPadding(dp(16), dp(16), dp(16), dp(16));
-        final TextView err = errView();
-        LinearLayout box = vcol();
-        box.addView(e);
-        box.addView(err, lp(MATCH, WRAP, 8));
-        sheet("Use recovery key",
-            "Your locked files are restored into a folder named \"" + Shell.RECOVERED + "\" on your phone's storage.",
-            box, "Recover", (d, ok) -> {
-                setErr(err, null);
-                if (!Shell.hasAccess()) { setErr(err, "Allow All files access for Zorken first"); return; }
-                final String k = e.getText().toString();
-                ok.setEnabled(false);
-                ok.setText("Recovering…");
-                new Thread(() -> {
-                    String res = null, msg = null;
-                    try { res = Shell.recoverAll(this, k); } catch (Exception ex) { msg = String.valueOf(ex.getMessage()); }
-                    final String fr = res, fm = msg;
-                    runOnUiThread(() -> {
-                        if (isFinishing() || isDestroyed()) return;
-                        if (fr != null) { d.dismiss(); sheet("Recovery finished", fr, null, null, null); refresh(); }
-                        else {
-                            ok.setEnabled(true);
-                            ok.setText("Recover");
-                            setErr(err, fm.isEmpty() ? "Failed" : Character.toUpperCase(fm.charAt(0)) + fm.substring(1));
-                            vibrateWrong();
-                        }
-                    });
-                }).start();
-            });
     }
 
     void changePin() {
@@ -1541,7 +1447,6 @@ public class MainActivity extends Activity {
         i.putExtra("apps", android.text.TextUtils.join(",", set("apps")));
         i.putExtra("paths", android.text.TextUtils.join("\n", set("paths")));
         i.putExtra("threshold", sp.getInt("th", 2));
-        if (sp.getString("vkey", null) != null) i.putExtra("vkey", sp.getString("vkey", null));
         if (nonce != null) i.putExtra("nonce", nonce);
         if (newhash != null) i.putExtra("newhash", newhash);
         sendBroadcast(i);

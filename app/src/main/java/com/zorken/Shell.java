@@ -19,8 +19,6 @@ public class Shell {
     static final String VAULT = ".zorken";
     static final String EXT = ".zk";
     static final String KEYS = ".keys";
-    static final String REC = ".recovery";
-    static final String RECOVERED = "Zorken recovered";
     static final Object LOCK = new Object();
     static final AtomicInteger applyActive = new AtomicInteger();
     static volatile boolean stopReq;
@@ -139,37 +137,23 @@ public class Shell {
         } catch (Exception e) { return null; }
     }
 
-    static Set<File> allVaults(Context c) {
-        Set<File> out = vaultDirs(pathSet(c));
-        File[] vols = new File("/storage").listFiles();
-        if (vols != null) for (File v : vols) {
-            String n = v.getName();
-            if (n.equals("emulated") || n.equals("self")) continue;
-            File d = new File(v, VAULT);
-            if (d.isDirectory()) out.add(d);
-        }
-        return out;
-    }
-
-    static void writeBlob(File vault, String name, byte[] data) {
+    static void writeKeys(File vault, byte[] bundle) {
         try {
-            File k = new File(vault, name);
+            File k = new File(vault, KEYS);
             byte[] cur = k.exists() ? readAll(k) : null;
-            if (cur != null && Arrays.equals(cur, data)) return;
+            if (cur != null && Arrays.equals(cur, bundle)) return;
             if (!vault.isDirectory() && !vault.mkdirs()) return;
-            File t = new File(vault, name + ".tmp");
-            try (FileOutputStream o = new FileOutputStream(t)) { o.write(data); o.getFD().sync(); }
+            File t = new File(vault, KEYS + ".tmp");
+            try (FileOutputStream o = new FileOutputStream(t)) { o.write(bundle); o.getFD().sync(); }
             if (!t.renameTo(k)) t.delete();
         } catch (Exception ignored) {}
     }
-
-    static void writeKeys(File vault, byte[] bundle) { writeBlob(vault, KEYS, bundle); }
 
     static byte[] bundle(Context c) {
         SharedPreferences sp = Common.prefs(c);
         String b64 = sp.getString("vbundle", null);
         if (b64 != null) try { return Base64.getDecoder().decode(b64); } catch (Exception ignored) {}
-        for (File v : allVaults(c)) {
+        for (File v : vaultDirs(pathSet(c))) {
             File k = new File(v, KEYS);
             byte[] b = k.exists() ? readAll(k) : null;
             if (b == null) continue;
@@ -186,77 +170,7 @@ public class Shell {
 
     static void storeBundle(Context c, byte[] b) {
         Common.prefs(c).edit().putString("vbundle", Base64.getEncoder().encodeToString(b)).commit();
-        for (File v : allVaults(c)) if (v.isDirectory()) writeKeys(v, b);
-    }
-
-    static byte[] recoveryBlob(Context c) {
-        SharedPreferences sp = Common.prefs(c);
-        String b64 = sp.getString("vrec", null);
-        if (b64 != null) try { return Base64.getDecoder().decode(b64); } catch (Exception ignored) {}
-        for (File v : allVaults(c)) {
-            File f = new File(v, REC);
-            byte[] b = f.exists() ? readAll(f) : null;
-            if (b == null || b.length < 32 || !Arrays.equals(Arrays.copyOf(b, 4), Vault.RMAGIC)) continue;
-            sp.edit().putString("vrec", Base64.getEncoder().encodeToString(b)).apply();
-            return b;
-        }
-        return null;
-    }
-
-    static void storeRecovery(Context c, byte[] blob) {
-        Common.prefs(c).edit().putString("vrec", Base64.getEncoder().encodeToString(blob)).commit();
-        for (File v : allVaults(c)) if (v.isDirectory()) writeBlob(v, REC, blob);
-    }
-
-    public static boolean hasRecovery(Context c) { return recoveryBlob(c) != null; }
-
-    public static String createRecovery(Context c, String pin) throws Exception {
-        byte[] b = bundle(c);
-        if (b == null) throw new IOException("no lock key yet");
-        Vault.Recovery r = Vault.newRecovery(unlock(c, pin), Vault.publicBytes(b));
-        storeRecovery(c, r.blob);
-        save(c, "key", "recovery key created");
-        return r.key;
-    }
-
-    public static String recoverAll(Context c, String keyText) throws Exception {
-        byte[] b = bundle(c);
-        if (b == null) throw new IOException("no lock key found in the vault");
-        byte[] rec = recoveryBlob(c);
-        if (rec == null) throw new IOException("no recovery file found in the vault");
-        PrivateKey priv;
-        try { priv = Vault.unlockRecovery(rec, Vault.publicBytes(b), keyText); }
-        catch (java.security.GeneralSecurityException e) { throw new IOException("wrong recovery key"); }
-        int done = 0, kept = 0;
-        String where = null;
-        StringBuilder log = new StringBuilder();
-        applyActive.incrementAndGet();
-        try {
-            stopReq = true;
-            synchronized (LOCK) {
-                stopReq = false;
-                for (File v : allVaults(c)) {
-                    File[] fs = v.listFiles();
-                    if (fs == null) continue;
-                    Arrays.sort(fs);
-                    File dst = new File(v.getParentFile(), RECOVERED);
-                    for (File f : fs) {
-                        if (!f.getName().matches("\\d+\\.\\d{1,6}\\.zk")) continue;
-                        try {
-                            long clash = Vault.extract(f, priv, dst, new BooleanSupplier() { public boolean getAsBoolean() { return false; } });
-                            if (clash == 0) { f.delete(); done++; if (where == null) where = dst.getPath(); }
-                            else { kept++; log.append("kept ").append(f.getName()).append(": ").append(clash).append(" file(s) clash\n"); }
-                        } catch (Exception e) { kept++; log.append("could not open ").append(f.getName()).append(": ").append(e).append('\n'); }
-                    }
-                    cleanVault(v);
-                }
-            }
-        } finally { applyActive.decrementAndGet(); }
-        String res = done == 0 && kept == 0 ? "No locked files were found."
-            : "Recovered " + done + " locked container" + (done == 1 ? "" : "s") + (where == null ? "" : " into " + where)
-                + (kept == 0 ? "." : ". " + kept + " could not be restored, see Logs.");
-        save(c, "recover", res + (log.length() > 0 ? "\n" + log : ""));
-        return res;
+        for (File v : vaultDirs(pathSet(c))) if (v.isDirectory()) writeKeys(v, b);
     }
 
     public static void ensureBundle(Context c, String pin) {
@@ -305,9 +219,7 @@ public class Shell {
     static void cleanVault(File vault) {
         String[] kids = vault.list();
         if (kids == null) return;
-        boolean onlyKeys = kids.length > 0;
-        for (String k : kids) if (!k.equals(KEYS) && !k.equals(REC)) onlyKeys = false;
-        if (onlyKeys) { new File(vault, KEYS).delete(); new File(vault, REC).delete(); kids = vault.list(); }
+        if (kids.length == 1 && kids[0].equals(KEYS)) { new File(vault, KEYS).delete(); kids = vault.list(); }
         if (kids != null && kids.length == 0) vault.delete();
     }
 
@@ -363,7 +275,6 @@ public class Shell {
         if (applyActive.get() > 0) return true;
         byte[] b = bundle(c);
         if (b == null) { save(c, "lock", "NOT LOCKED: no lock key yet. Open Zorken and unlock once."); return false; }
-        byte[] rec = recoveryBlob(c);
         StringBuilder log = new StringBuilder();
         boolean yielded = false;
         try {
@@ -406,7 +317,6 @@ public class Shell {
                             if (free < bytes + (64L << 20))
                                 throw new IOException("not enough free space (" + mb(free) + " free, needs " + mb(bytes + (64L << 20)) + ")");
                             writeKeys(vault, b);
-                            if (rec != null) writeBlob(vault, REC, rec);
                             Vault.encrypt(batch, tmp, pub, stop);
                             if (!tmp.renameTo(out)) throw new IOException("cannot rename container");
                             for (Vault.Entry e : batch) if (!e.dir) e.f.delete();
