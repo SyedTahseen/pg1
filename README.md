@@ -26,6 +26,7 @@ You choose how many wrong unlock attempts are allowed. If someone goes over the 
 | **Hide apps** | Pick any apps. They disappear from your phone when the limit is reached. |
 | **Lock files and folders** | Chosen items are moved into a hidden vault and encrypted. |
 | **Secret PIN** | A separate PIN, different from your phone lock, is the only way to restore. |
+| **Recovery key** | A one-time key you save yourself. It gets your locked files back even if you lose your PIN. |
 | **Safe by design** | A correct phone unlock never restores anything. Hiding needs no PIN, restoring does. |
 | **Your limit** | Choose 1 to 10 wrong attempts before Zorken acts. |
 | **Swipe to hide or restore** | One swipe, with live progress in the app and in a notification. |
@@ -39,12 +40,14 @@ You choose how many wrong unlock attempts are allowed. If someone goes over the 
 3. Open Zorken and **create your PIN**.
 4. Choose your **apps** and **folders or files**, and set your **wrong attempts** limit.
 5. Allow **All files access** and **notifications** when asked.
+6. **Save your recovery key** when Zorken shows it.
 
 Tip: turn off battery optimization for Zorken so locking is never interrupted.
 
 ## Good to know
 
-- **There is no PIN recovery.** Files that are already locked cannot be opened without your PIN, so remember it.
+- **Save your recovery key.** Zorken shows it once, right after setup. Copy it somewhere safe. Without your PIN and without this key, locked files can never be opened.
+- **Lost your PIN?** On the PIN screen tap **Forgot PIN? Use recovery key**. Your locked files are restored into a folder called `Zorken recovered`.
 - **Something wrong?** The status card on the home screen tells you what to fix, and the **Logs** section shows what happened.
 - **App icon hidden?** Open Zorken from LSPosed, then Modules, then Zorken.
 - **After an update,** reboot once if the status card says the module is an older version.

@@ -129,6 +129,78 @@ public final class Vault {
         return seal(parse(bundle).pub, raw, newPin, vkey);
     }
 
+    static final byte[] RMAGIC = {'Z', 'K', 'R', '1'};
+    static final String B32 = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
+    static final int RK_BYTES = 20;
+
+    public static final class Recovery {
+        public final String key;
+        public final byte[] blob;
+        Recovery(String key, byte[] blob) { this.key = key; this.blob = blob; }
+    }
+
+    public static byte[] publicBytes(byte[] bundle) throws IOException { return parse(bundle).pub; }
+
+    static String formatKey(byte[] raw) {
+        StringBuilder sb = new StringBuilder();
+        int buf = 0, bits = 0, n = 0;
+        for (byte b : raw) {
+            buf = (buf << 8) | (b & 0xff);
+            bits += 8;
+            while (bits >= 5) {
+                if (n > 0 && n % 4 == 0) sb.append('-');
+                sb.append(B32.charAt((buf >> (bits - 5)) & 31));
+                bits -= 5; n++;
+            }
+            buf &= (1 << bits) - 1;
+        }
+        return sb.toString();
+    }
+
+    static byte[] parseKey(String text) throws IOException {
+        StringBuilder clean = new StringBuilder();
+        for (char c : (text == null ? "" : text).toUpperCase(java.util.Locale.ROOT).toCharArray())
+            if (c != '-' && !Character.isWhitespace(c)) clean.append(c);
+        if (clean.length() != RK_BYTES * 8 / 5) throw new IOException("recovery key has the wrong length");
+        byte[] out = new byte[RK_BYTES];
+        int buf = 0, bits = 0, o = 0;
+        for (int i = 0; i < clean.length(); i++) {
+            int v = B32.indexOf(clean.charAt(i));
+            if (v < 0) throw new IOException("recovery key has invalid characters");
+            buf = (buf << 5) | v;
+            bits += 5;
+            if (bits >= 8) { out[o++] = (byte) (buf >> (bits - 8)); bits -= 8; buf &= (1 << bits) - 1; }
+        }
+        return out;
+    }
+
+    private static byte[] recoveryWrapKey(byte[] raw) throws GeneralSecurityException {
+        return hmac(raw, "ZKR1-wrap".getBytes(StandardCharsets.UTF_8));
+    }
+
+    public static Recovery newRecovery(PrivateKey priv, byte[] pubEnc) throws GeneralSecurityException, IOException {
+        byte[] raw = new byte[RK_BYTES], iv = new byte[12];
+        RND.nextBytes(raw);
+        RND.nextBytes(iv);
+        Cipher c = gcm(Cipher.ENCRYPT_MODE, recoveryWrapKey(raw), iv);
+        c.updateAAD(pubEnc);
+        byte[] ct = c.doFinal(priv.getEncoded());
+        ByteArrayOutputStream bo = new ByteArrayOutputStream();
+        bo.write(RMAGIC);
+        bo.write(iv);
+        bo.write(ct);
+        return new Recovery(formatKey(raw), bo.toByteArray());
+    }
+
+    public static PrivateKey unlockRecovery(byte[] blob, byte[] pubEnc, String key) throws GeneralSecurityException, IOException {
+        if (blob == null || blob.length < 4 + 12 + 16 || !Arrays.equals(Arrays.copyOf(blob, 4), RMAGIC)) throw new IOException("not a recovery file");
+        byte[] iv = Arrays.copyOfRange(blob, 4, 16);
+        byte[] ct = Arrays.copyOfRange(blob, 16, blob.length);
+        Cipher c = gcm(Cipher.DECRYPT_MODE, recoveryWrapKey(parseKey(key)), iv);
+        c.updateAAD(pubEnc);
+        return KeyFactory.getInstance("EC").generatePrivate(new PKCS8EncodedKeySpec(c.doFinal(ct)));
+    }
+
     private static byte[] itemKey(PrivateKey mine, PublicKey theirs, byte[] ephPubEnc) throws GeneralSecurityException {
         KeyAgreement ka = KeyAgreement.getInstance("ECDH");
         ka.init(mine);
